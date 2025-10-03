@@ -1,1 +1,294 @@
 # ocp-doc-checker
+
+A tool to check if OpenShift Container Platform (OCP) documentation URLs are outdated and suggest newer versions.
+
+## Features
+
+- ✅ Check single OCP documentation URLs
+- 📁 Scan files and directories for OCP URLs
+- 🔧 Automatically fix outdated URLs in files
+- 📊 JSON output for automation
+- 🎯 GitHub Action for CI/CD integration
+- 🔍 Batch processing with detailed reports
+
+## Installation
+
+### Binary
+
+Build from source:
+
+```bash
+git clone https://github.com/sebrandon1/ocp-doc-checker.git
+cd ocp-doc-checker
+make build
+```
+
+The binary will be created as `ocp-doc-checker` in the current directory.
+
+### GitHub Action
+
+Add to your workflow (see [GitHub Action Usage](#github-action-usage) below).
+
+## CLI Usage
+
+### Basic Commands
+
+#### Check a single URL
+
+```bash
+./ocp-doc-checker -url "https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full"
+```
+
+#### Scan a directory for OCP URLs
+
+```bash
+./ocp-doc-checker -dir ./docs
+```
+
+#### Scan a single file
+
+```bash
+./ocp-doc-checker -dir ./README.md
+```
+
+#### Automatically fix outdated URLs
+
+```bash
+./ocp-doc-checker -dir ./docs -fix
+```
+
+This will:
+1. Find all OCP documentation URLs in the directory
+2. Check which ones are outdated
+3. Automatically update them to the latest version in place
+
+### CLI Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-url` | Single OCP documentation URL to check | - |
+| `-dir` | Directory or file to scan for OCP URLs | - |
+| `-fix` | Automatically fix outdated URLs in files (requires `-dir`) | `false` |
+| `-json` | Output results in JSON format | `false` |
+| `-verbose` | Enable verbose output | `false` |
+| `-all-available` | Show all available newer versions (default: latest only) | `false` |
+| `-version` | Print version information | - |
+
+### Examples
+
+#### Show all available newer versions
+
+```bash
+./ocp-doc-checker -url "https://docs.redhat.com/..." -all-available
+```
+
+#### Get JSON output for automation
+
+```bash
+./ocp-doc-checker -url "https://docs.redhat.com/..." -json
+```
+
+#### Scan and fix with verbose output
+
+```bash
+./ocp-doc-checker -dir ./docs -fix -verbose
+```
+
+### Exit Codes
+
+- `0`: All URLs are up-to-date, or `-fix` was used successfully
+- `1`: Outdated URLs found (when not using `-fix`), or error occurred
+
+## GitHub Action Usage
+
+### Basic Example - Check Single URL
+
+```yaml
+name: Check Documentation
+on: [pull_request]
+
+jobs:
+  check-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check OCP Documentation URL
+        uses: sebrandon1/ocp-doc-checker@main
+        with:
+          url: 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full'
+          fail-on-outdated: true
+```
+
+### Scan Files and Directories
+
+```yaml
+- name: Scan documentation files
+  uses: sebrandon1/ocp-doc-checker@main
+  with:
+    paths: 'docs/ README.md CONTRIBUTING.md'
+    fail-on-outdated: true
+```
+
+### Non-Blocking Check
+
+```yaml
+- name: Check documentation (warning only)
+  uses: sebrandon1/ocp-doc-checker@main
+  with:
+    paths: 'docs/'
+    fail-on-outdated: false
+```
+
+### With All Available Versions
+
+```yaml
+- name: Check with all versions
+  uses: sebrandon1/ocp-doc-checker@main
+  with:
+    url: 'https://docs.redhat.com/...'
+    all-available: true
+    verbose: true
+```
+
+### Action Inputs
+
+| Input | Description | Required | Default |
+|-------|-------------|----------|---------|
+| `url` | Single OCP documentation URL to check | No | - |
+| `paths` | Space-separated list of files/directories to scan | No | - |
+| `fail-on-outdated` | Fail the action if outdated URLs are found | No | `true` |
+| `all-available` | Show all available newer versions | No | `false` |
+| `verbose` | Enable verbose output | No | `false` |
+
+**Note:** Either `url` or `paths` must be specified, but not both.
+
+### Action Outputs
+
+#### Single URL Mode
+
+| Output | Description |
+|--------|-------------|
+| `is-outdated` | Whether the URL is outdated (`true`/`false`) |
+| `latest-version` | The latest version where the doc exists (e.g., `4.19`) |
+| `newer-versions` | JSON array of newer versions |
+
+#### Batch Mode (paths)
+
+| Output | Description |
+|--------|-------------|
+| `is-outdated` | Whether any URLs are outdated (`true`/`false`) |
+| `outdated-count` | Number of outdated URLs found |
+| `uptodate-count` | Number of up-to-date URLs found |
+| `total-count` | Total number of URLs checked |
+
+### Using Outputs
+
+```yaml
+- name: Check documentation
+  id: doc-check
+  uses: sebrandon1/ocp-doc-checker@main
+  with:
+    url: 'https://docs.redhat.com/...'
+    fail-on-outdated: false
+
+- name: Use outputs
+  run: |
+    echo "Is outdated: ${{ steps.doc-check.outputs.is-outdated }}"
+    echo "Latest version: ${{ steps.doc-check.outputs.latest-version }}"
+```
+
+## JSON Output Format
+
+### Single URL
+
+```json
+{
+  "original_url": "https://docs.redhat.com/.../4.17/...",
+  "original_version": "4.17",
+  "latest_version": "4.19",
+  "is_outdated": true,
+  "newer_versions": [
+    {
+      "version": "4.18",
+      "url": "https://docs.redhat.com/.../4.18/..."
+    },
+    {
+      "version": "4.19",
+      "url": "https://docs.redhat.com/.../4.19/..."
+    }
+  ]
+}
+```
+
+## Development
+
+### Build
+
+```bash
+make build
+```
+
+### Run Tests
+
+```bash
+# Run all tests (unit + integration)
+make test
+
+# Run only Go unit tests
+make test-unit
+
+# Run only integration tests
+make test-integration
+
+# Run all CI tests
+make test-ci
+```
+
+### Format and Lint
+
+```bash
+# Format code
+make fmt
+
+# Run linters
+make lint
+```
+
+### Install Locally
+
+```bash
+make install
+```
+
+This installs the binary to `$GOPATH/bin`.
+
+## How It Works
+
+1. **URL Parsing**: Extracts OCP version and document structure from Red Hat documentation URLs
+2. **Version Discovery**: Checks newer OCP versions to see if the same document exists
+3. **URL Validation**: Verifies that suggested URLs are accessible (HTTP HEAD/GET requests)
+4. **Smart Recommendations**: Only suggests versions where the exact document and anchor exist
+
+## Supported URL Formats
+
+The tool supports Red Hat OpenShift Container Platform documentation URLs in the following formats:
+
+- `https://docs.redhat.com/en/documentation/openshift_container_platform/{version}/html-single/{document}/index#{anchor}`
+- `https://docs.redhat.com/en/documentation/openshift_container_platform/{version}/html/{document}/{page}#{anchor}`
+
+Examples:
+- Single-page HTML: `.../4.17/html-single/disconnected_environments/index#anchor`
+- Multi-page HTML: `.../4.17/html/telco_ref_design_specs/telco-hub-ref-design-specs#anchor`
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Author
+
+Brandon Palm
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
