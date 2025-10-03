@@ -16,7 +16,7 @@ jobs:
     name: Check Documentation Links in Markdown Files
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Extract and Check OCP URLs
         shell: bash

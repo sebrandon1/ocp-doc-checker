@@ -12,7 +12,7 @@ jobs:
     name: Single URL Check Example
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check 4.17 Documentation (expect outdated)
         uses: ./
@@ -34,7 +34,7 @@ jobs:
     name: Batch Scan Example
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Scan documentation files for OCP URLs
         uses: ./
