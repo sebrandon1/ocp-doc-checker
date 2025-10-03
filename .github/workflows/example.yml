@@ -1,0 +1,53 @@
+name: Example Usage
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  single-url-check:
+    runs-on: ubuntu-latest
+    name: Single URL Check Example
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check 4.17 Documentation (expect outdated)
+        uses: ./
+        continue-on-error: true
+        with:
+          url: 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full'
+          fail-on-outdated: true
+          verbose: true
+
+      - name: Check 4.19 Documentation (expect up to date)
+        uses: ./
+        with:
+          url: 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/disconnected_environments/index#mirroring-image-set-partial'
+          fail-on-outdated: false
+          verbose: true
+
+  batch-scan-check:
+    runs-on: ubuntu-latest
+    name: Batch Scan Example
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan documentation files for OCP URLs
+        uses: ./
+        id: batch-check
+        continue-on-error: true
+        with:
+          paths: 'docs/ README.md'
+          fail-on-outdated: false
+
+      - name: Report results
+        run: |
+          echo "Batch scan completed"
+          echo "Total URLs: ${{ steps.batch-check.outputs.total-count }}"
+          echo "Up-to-date: ${{ steps.batch-check.outputs.uptodate-count }}"
+          echo "Outdated: ${{ steps.batch-check.outputs.outdated-count }}"
+
