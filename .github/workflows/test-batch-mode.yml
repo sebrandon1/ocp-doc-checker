@@ -1,0 +1,102 @@
+name: Test Batch Mode
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test-batch-single-file:
+    name: Test Batch Mode - Single File
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check single file
+        uses: ./
+        id: single-file
+        continue-on-error: true
+        with:
+          paths: 'docs/test-example.md'
+          fail-on-outdated: false
+
+      - name: Display outputs
+        run: |
+          echo "Is Outdated: ${{ steps.single-file.outputs.is-outdated }}"
+          echo "Outdated Count: ${{ steps.single-file.outputs.outdated-count }}"
+          echo "Up-to-date Count: ${{ steps.single-file.outputs.uptodate-count }}"
+          echo "Total Count: ${{ steps.single-file.outputs.total-count }}"
+
+  test-batch-directory:
+    name: Test Batch Mode - Directory
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check directory
+        uses: ./
+        id: directory
+        continue-on-error: true
+        with:
+          paths: 'docs/'
+          fail-on-outdated: false
+
+      - name: Display outputs
+        run: |
+          echo "Is Outdated: ${{ steps.directory.outputs.is-outdated }}"
+          echo "Outdated Count: ${{ steps.directory.outputs.outdated-count }}"
+          echo "Up-to-date Count: ${{ steps.directory.outputs.uptodate-count }}"
+          echo "Total Count: ${{ steps.directory.outputs.total-count }}"
+
+  test-batch-multiple-paths:
+    name: Test Batch Mode - Multiple Paths
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check multiple paths
+        uses: ./
+        id: multiple
+        continue-on-error: true
+        with:
+          paths: 'docs/ README.md'
+          fail-on-outdated: false
+
+      - name: Display outputs
+        run: |
+          echo "Is Outdated: ${{ steps.multiple.outputs.is-outdated }}"
+          echo "Outdated Count: ${{ steps.multiple.outputs.outdated-count }}"
+          echo "Up-to-date Count: ${{ steps.multiple.outputs.uptodate-count }}"
+          echo "Total Count: ${{ steps.multiple.outputs.total-count }}"
+
+  test-batch-with-actions:
+    name: Test Batch Mode - With Conditional Actions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check documentation
+        uses: ./
+        id: check
+        continue-on-error: true
+        with:
+          paths: 'docs/'
+          fail-on-outdated: false
+
+      - name: Comment if outdated
+        if: steps.check.outputs.is-outdated == 'true'
+        run: |
+          echo "::notice::Found ${{ steps.check.outputs.outdated-count }} outdated URL(s)"
+          echo "Would post comment here in a real PR"
+
+      - name: Success if all up-to-date
+        if: steps.check.outputs.is-outdated == 'false'
+        run: |
+          echo "::notice::All ${{ steps.check.outputs.total-count }} URLs are up-to-date! 🎉"
+

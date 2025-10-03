@@ -1,0 +1,57 @@
+name: Lint Markdown Documentation
+
+on:
+  pull_request:
+    paths:
+      - '**.md'
+  push:
+    branches:
+      - main
+    paths:
+      - '**.md'
+
+jobs:
+  lint-docs:
+    runs-on: ubuntu-latest
+    name: Check Documentation Links in Markdown Files
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract and Check OCP URLs
+        shell: bash
+        run: |
+          # Find all markdown files
+          FILES=$(find . -name "*.md" -type f)
+          
+          # Extract OCP documentation URLs
+          URLS=$(grep -oP 'https://docs\.redhat\.com/en/documentation/openshift_container_platform/[0-9]+\.[0-9]+/[^)\s]+' $FILES | sort -u || true)
+          
+          if [ -z "$URLS" ]; then
+            echo "No OCP documentation URLs found in markdown files"
+            exit 0
+          fi
+          
+          echo "Found OCP documentation URLs:"
+          echo "$URLS"
+          echo ""
+          
+          # Check each URL
+          HAS_OUTDATED=false
+          while IFS= read -r url; do
+            if [ -n "$url" ]; then
+              echo "Checking: $url"
+              if ./ocp-doc-checker -url "$url"; then
+                echo "✓ Up to date"
+              else
+                echo "⚠️ Outdated"
+                HAS_OUTDATED=true
+              fi
+              echo ""
+            fi
+          done <<< "$URLS"
+          
+          if [ "$HAS_OUTDATED" = true ]; then
+            echo "::warning::Some OCP documentation URLs are outdated"
+          fi
+

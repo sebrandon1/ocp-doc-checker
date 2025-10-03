@@ -1,0 +1,234 @@
+name: 'OCP Documentation Checker'
+description: 'Check if OpenShift Container Platform documentation URLs are outdated'
+author: 'Brandon Palm'
+
+branding:
+  icon: 'check-circle'
+  color: 'red'
+
+inputs:
+  url:
+    description: 'OCP documentation URL to check (mutually exclusive with paths)'
+    required: false
+  paths:
+    description: 'Space-separated list of files or directories to scan for OCP URLs (mutually exclusive with url)'
+    required: false
+  fail-on-outdated:
+    description: 'Fail the action if documentation is outdated'
+    required: false
+    default: 'true'
+  all-available:
+    description: 'Show all available newer versions (default: latest only)'
+    required: false
+    default: 'false'
+  verbose:
+    description: 'Enable verbose output'
+    required: false
+    default: 'false'
+
+outputs:
+  is-outdated:
+    description: 'Whether the documentation is outdated (true/false). For batch mode, true if any URLs are outdated.'
+  latest-version:
+    description: 'The latest version where the documentation exists (single URL mode only)'
+  newer-versions:
+    description: 'JSON array of newer versions where the documentation exists (single URL mode only)'
+  outdated-count:
+    description: 'Number of outdated URLs found (batch mode only)'
+  uptodate-count:
+    description: 'Number of up-to-date URLs found (batch mode only)'
+  total-count:
+    description: 'Total number of URLs checked (batch mode only)'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+    
+    - name: Build ocp-doc-checker
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}
+        go build -o /tmp/ocp-doc-checker .
+    
+    - name: Run ocp-doc-checker
+      id: check
+      shell: bash
+      run: |
+        set +e  # Don't fail immediately on error
+        
+        FLAGS=""
+        if [ "${{ inputs.verbose }}" = "true" ]; then
+          FLAGS="$FLAGS -verbose"
+        fi
+        if [ "${{ inputs.all-available }}" = "true" ]; then
+          FLAGS="$FLAGS -all-available"
+        fi
+        
+        # Check if both url and paths are provided or neither
+        if [ -n "${{ inputs.url }}" ] && [ -n "${{ inputs.paths }}" ]; then
+          echo "::error::Cannot specify both 'url' and 'paths'. Use one or the other."
+          exit 1
+        fi
+        
+        if [ -z "${{ inputs.url }}" ] && [ -z "${{ inputs.paths }}" ]; then
+          echo "::error::Must specify either 'url' or 'paths'."
+          exit 1
+        fi
+        
+        # Single URL mode
+        if [ -n "${{ inputs.url }}" ]; then
+          OUTPUT=$(/tmp/ocp-doc-checker -url "${{ inputs.url }}" $FLAGS -json)
+          EXIT_CODE=$?
+          
+          echo "$OUTPUT"
+          
+          # Parse JSON output
+          IS_OUTDATED=$(echo "$OUTPUT" | jq -r '.is_outdated')
+          LATEST_VERSION=$(echo "$OUTPUT" | jq -r '.latest_version')
+          NEWER_VERSIONS=$(echo "$OUTPUT" | jq -c '.newer_versions')
+          
+          # Set outputs
+          echo "is-outdated=$IS_OUTDATED" >> $GITHUB_OUTPUT
+          echo "latest-version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          echo "newer-versions=$NEWER_VERSIONS" >> $GITHUB_OUTPUT
+          
+          # Create summary
+          if [ "$IS_OUTDATED" = "true" ]; then
+            echo "### ⚠️ Documentation is Outdated" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**URL:** ${{ inputs.url }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Latest Version:** $LATEST_VERSION" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### Newer Versions Available:" >> $GITHUB_STEP_SUMMARY
+            echo "$OUTPUT" | jq -r '.newer_versions[] | "- Version \(.version): \(.url)"' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ✅ Documentation is Up to Date" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**URL:** ${{ inputs.url }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Version:** $LATEST_VERSION" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Fail if requested and outdated
+          if [ "${{ inputs.fail-on-outdated }}" = "true" ] && [ "$IS_OUTDATED" = "true" ]; then
+            echo "::error::Documentation is outdated. Latest version: $LATEST_VERSION"
+            exit 1
+          fi
+          
+          exit 0
+        fi
+        
+        # Batch mode - scan paths for URLs
+        echo "### 📋 OCP Documentation URL Check" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Find all files to scan
+        FILES=""
+        for path in ${{ inputs.paths }}; do
+          if [ -f "$path" ]; then
+            FILES="$FILES $path"
+          elif [ -d "$path" ]; then
+            FILES="$FILES $(find "$path" -type f \( -name "*.md" -o -name "*.markdown" -o -name "*.txt" -o -name "*.adoc" \))"
+          else
+            echo "::warning::Path not found: $path"
+          fi
+        done
+        
+        if [ -z "$FILES" ]; then
+          echo "::error::No files found to scan in specified paths"
+          exit 1
+        fi
+        
+        echo "Scanning files for OCP documentation URLs..."
+        echo "**Scanned paths:** ${{ inputs.paths }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Extract unique OCP documentation URLs
+        URLS=$(grep -rho 'https://docs\.redhat\.com/en/documentation/openshift_container_platform/[0-9]\+\.[0-9]\+/[^[:space:])\]"]*' $FILES 2>/dev/null | sort -u || true)
+        
+        if [ -z "$URLS" ]; then
+          echo "### ✅ No OCP Documentation URLs Found" >> $GITHUB_STEP_SUMMARY
+          echo "No URLs to check in the specified paths." >> $GITHUB_STEP_SUMMARY
+          exit 0
+        fi
+        
+        URL_COUNT=$(echo "$URLS" | wc -l)
+        echo "Found $URL_COUNT unique OCP documentation URL(s)"
+        echo "**Found $URL_COUNT unique URL(s)**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Check each URL
+        OUTDATED_COUNT=0
+        UPTODATE_COUNT=0
+        OUTDATED_URLS=""
+        
+        echo "| Status | Current Version | Latest Version | URL |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-----------------|----------------|-----|" >> $GITHUB_STEP_SUMMARY
+        
+        while IFS= read -r url; do
+          if [ -z "$url" ]; then
+            continue
+          fi
+          
+          echo "Checking: $url"
+          OUTPUT=$(/tmp/ocp-doc-checker -url "$url" -json 2>&1)
+          CHECK_EXIT=$?
+          
+          if [ $CHECK_EXIT -eq 0 ]; then
+            # Up to date
+            UPTODATE_COUNT=$((UPTODATE_COUNT + 1))
+            CURRENT_VERSION=$(echo "$OUTPUT" | jq -r '.original_version' 2>/dev/null || echo "?")
+            echo "| ✅ | $CURRENT_VERSION | $CURRENT_VERSION | [Link]($url) |" >> $GITHUB_STEP_SUMMARY
+          else
+            # Outdated or error
+            OUTDATED_COUNT=$((OUTDATED_COUNT + 1))
+            CURRENT_VERSION=$(echo "$OUTPUT" | jq -r '.original_version' 2>/dev/null || echo "?")
+            LATEST_VERSION=$(echo "$OUTPUT" | jq -r '.latest_version' 2>/dev/null || echo "?")
+            LATEST_URL=$(echo "$OUTPUT" | jq -r '.newer_versions[-1].url' 2>/dev/null || echo "")
+            
+            echo "| ⚠️ | $CURRENT_VERSION | $LATEST_VERSION | [Link]($url) |" >> $GITHUB_STEP_SUMMARY
+            
+            if [ -n "$LATEST_URL" ]; then
+              OUTDATED_URLS="${OUTDATED_URLS}${url}|${LATEST_URL}\n"
+            fi
+          fi
+        done <<< "$URLS"
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Summary:** $UPTODATE_COUNT up-to-date, $OUTDATED_COUNT outdated" >> $GITHUB_STEP_SUMMARY
+        
+        # Add recommendations for outdated URLs
+        if [ $OUTDATED_COUNT -gt 0 ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔧 Recommended Updates" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Replace the following URLs in your documentation:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo -e "$OUTDATED_URLS" | while IFS='|' read -r old_url new_url; do
+            if [ -n "$old_url" ] && [ -n "$new_url" ]; then
+              echo "- 🔄 Update:" >> $GITHUB_STEP_SUMMARY
+              echo "  - **Old:** \`$old_url\`" >> $GITHUB_STEP_SUMMARY
+              echo "  - **New:** \`$new_url\`" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+        fi
+        
+        # Set outputs
+        echo "is-outdated=$([ $OUTDATED_COUNT -gt 0 ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+        echo "outdated-count=$OUTDATED_COUNT" >> $GITHUB_OUTPUT
+        echo "uptodate-count=$UPTODATE_COUNT" >> $GITHUB_OUTPUT
+        echo "total-count=$URL_COUNT" >> $GITHUB_OUTPUT
+        
+        # Fail if requested and any outdated
+        if [ "${{ inputs.fail-on-outdated }}" = "true" ] && [ $OUTDATED_COUNT -gt 0 ]; then
+          echo "::error::Found $OUTDATED_COUNT outdated documentation URL(s)"
+          exit 1
+        fi
+        
+        exit 0
+

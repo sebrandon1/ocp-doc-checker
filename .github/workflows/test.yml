@@ -1,0 +1,103 @@
+name: Test PR
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test-go:
+    name: Run Go Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build
+        run: go build -o ocp-doc-checker .
+
+  test-cli:
+    name: Test CLI Functionality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build tool
+        run: go build -o ocp-doc-checker .
+
+      - name: Test 1 - Outdated URL should fail
+        id: test1
+        continue-on-error: true
+        run: ./scripts/test-outdated-url.sh
+
+      - name: Test 2 - Current URL should pass
+        id: test2
+        run: ./scripts/test-current-url.sh
+
+      - name: Test 3 - Verify suggested URLs are accessible
+        id: test3
+        run: ./scripts/test-url-accessibility.sh
+
+      - name: Test 4 - Invalid URL should fail gracefully
+        id: test4
+        run: ./scripts/test-invalid-url.sh
+
+      - name: Test 5 - Specific version replacement
+        id: test5
+        run: ./scripts/test-url-replacement.sh
+
+      - name: Test Summary
+        if: always()
+        run: ./scripts/generate-cli-test-summary.sh "${{ steps.test1.outcome }}" "${{ steps.test2.outcome }}" "${{ steps.test3.outcome }}" "${{ steps.test4.outcome }}" "${{ steps.test5.outcome }}"
+
+  test-action:
+    name: Test GitHub Action
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Test Action with outdated URL
+        id: test_outdated
+        uses: ./
+        continue-on-error: true
+        with:
+          url: 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full'
+          fail-on-outdated: true
+          verbose: true
+
+      - name: Verify outdated detection
+        if: steps.test_outdated.outcome == 'failure'
+        run: ./scripts/verify-action-outdated.sh "${{ steps.test_outdated.outputs.is-outdated }}"
+
+      - name: Test Action with current URL
+        id: test_current
+        uses: ./
+        with:
+          url: 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/disconnected_environments/index#mirroring-image-set-partial'
+          fail-on-outdated: false
+          verbose: true
+
+      - name: Verify current detection
+        if: steps.test_current.outcome == 'success'
+        run: ./scripts/verify-action-current.sh "${{ steps.test_current.outputs.is-outdated }}" "${{ steps.test_current.outputs.latest-version }}"
+
+      - name: Action Test Summary
+        if: always()
+        run: ./scripts/generate-action-test-summary.sh "${{ steps.test_outdated.outcome }}" "${{ steps.test_outdated.outputs.is-outdated }}" "${{ steps.test_current.outcome }}" "${{ steps.test_current.outputs.is-outdated }}"
+
