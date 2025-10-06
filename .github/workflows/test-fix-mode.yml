@@ -206,6 +206,39 @@ jobs:
           
           echo "✅ All files in directory successfully updated!"
 
+  test-fix-mode-default-path:
+    name: Test Fix Mode - Default Path
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Create test file with outdated URL in current directory
+        run: |
+          cat > test-default.md << 'EOF'
+          # Test Default Path Behavior
+          Link: https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/networking/index
+          EOF
+          cat test-default.md
+
+      - name: Run fix mode without specifying paths
+        uses: ./
+        with:
+          fix: true
+
+      - name: Verify file was updated
+        run: |
+          echo "Checking if file was updated..."
+          cat test-default.md
+          
+          # Verify the URL was updated
+          if grep -q "openshift_container_platform/4\.19/" test-default.md; then
+            echo "✅ File was updated to 4.19!"
+          else
+            echo "❌ ERROR: File was not updated"
+            exit 1
+          fi
+
   test-fix-mode-no-outdated:
     name: Test Fix Mode - No Outdated URLs
     runs-on: ubuntu-latest

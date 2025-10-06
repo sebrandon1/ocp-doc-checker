@@ -11,7 +11,7 @@ inputs:
     description: 'OCP documentation URL to check (mutually exclusive with paths)'
     required: false
   paths:
-    description: 'Space-separated list of files or directories to scan for OCP URLs (mutually exclusive with url)'
+    description: 'Space-separated list of files or directories to scan for OCP URLs (mutually exclusive with url). Defaults to current directory if not specified.'
     required: false
   fail-on-outdated:
     description: 'Fail the action if documentation is outdated'
@@ -72,14 +72,9 @@ runs:
           FLAGS="$FLAGS -all-available"
         fi
         
-        # Check if both url and paths are provided or neither
+        # Check if both url and paths are provided
         if [ -n "${{ inputs.url }}" ] && [ -n "${{ inputs.paths }}" ]; then
           echo "::error::Cannot specify both 'url' and 'paths'. Use one or the other."
-          exit 1
-        fi
-        
-        if [ -z "${{ inputs.url }}" ] && [ -z "${{ inputs.paths }}" ]; then
-          echo "::error::Must specify either 'url' or 'paths'."
           exit 1
         fi
         
@@ -87,6 +82,13 @@ runs:
         if [ "${{ inputs.fix }}" = "true" ] && [ -n "${{ inputs.url }}" ]; then
           echo "::error::The 'fix' option can only be used with 'paths', not with a single 'url'."
           exit 1
+        fi
+        
+        # Default to current directory if neither url nor paths specified
+        SCAN_PATHS="${{ inputs.paths }}"
+        if [ -z "${{ inputs.url }}" ] && [ -z "${{ inputs.paths }}" ]; then
+          echo "No paths specified, defaulting to current directory (.)"
+          SCAN_PATHS="."
         fi
         
         # Single URL mode
@@ -143,7 +145,7 @@ runs:
           echo "### 🔧 Automatically Fixing Outdated URLs" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          for path in ${{ inputs.paths }}; do
+          for path in $SCAN_PATHS; do
             echo "----------------------------------------"
             echo "Processing path: $path"
             echo "----------------------------------------"
@@ -193,7 +195,7 @@ runs:
         
         # Find all files to scan
         FILES=""
-        for path in ${{ inputs.paths }}; do
+        for path in $SCAN_PATHS; do
           if [ -f "$path" ]; then
             FILES="$FILES $path"
           elif [ -d "$path" ]; then
@@ -209,7 +211,7 @@ runs:
         fi
         
         echo "Scanning files for OCP documentation URLs..."
-        echo "**Scanned paths:** ${{ inputs.paths }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Scanned paths:** $SCAN_PATHS" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
         # Extract unique OCP documentation URLs
