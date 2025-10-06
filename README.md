@@ -114,7 +114,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Check OCP Documentation URL
-        uses: sebrandon1/ocp-doc-checker@main
+        uses: sebrandon1/ocp-doc-checker@v1
         with:
           url: 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full'
           fail-on-outdated: true
@@ -124,17 +124,31 @@ jobs:
 
 ```yaml
 - name: Scan documentation files
-  uses: sebrandon1/ocp-doc-checker@main
+  uses: sebrandon1/ocp-doc-checker@v1
   with:
     paths: 'docs/ README.md CONTRIBUTING.md'
     fail-on-outdated: true
 ```
 
+### Automatically Fix Outdated URLs
+
+```yaml
+- name: Fix outdated documentation URLs
+  uses: sebrandon1/ocp-doc-checker@v1
+  with:
+    paths: 'docs/ README.md'
+    fix: true
+```
+
+In conjunction with a PR creation action, this can create a powerful tool to automatically fix your outdated URLs.
+
+This will automatically update any outdated OCP documentation URLs in the specified files to their latest versions. When `fix` is enabled, the action won't fail even if outdated URLs were found (since they've been fixed).
+
 ### Non-Blocking Check
 
 ```yaml
 - name: Check documentation (warning only)
-  uses: sebrandon1/ocp-doc-checker@main
+  uses: sebrandon1/ocp-doc-checker@v1
   with:
     paths: 'docs/'
     fail-on-outdated: false
@@ -144,7 +158,7 @@ jobs:
 
 ```yaml
 - name: Check with all versions
-  uses: sebrandon1/ocp-doc-checker@main
+  uses: sebrandon1/ocp-doc-checker@v1
   with:
     url: 'https://docs.redhat.com/...'
     all-available: true
@@ -160,8 +174,9 @@ jobs:
 | `fail-on-outdated` | Fail the action if outdated URLs are found | No | `true` |
 | `all-available` | Show all available newer versions | No | `false` |
 | `verbose` | Enable verbose output | No | `false` |
+| `fix` | Automatically fix outdated URLs in files (only works with `paths`) | No | `false` |
 
-**Note:** Either `url` or `paths` must be specified, but not both.
+**Note:** Either `url` or `paths` must be specified, but not both. The `fix` option can only be used with `paths`.
 
 ### Action Outputs
 
@@ -187,7 +202,7 @@ jobs:
 ```yaml
 - name: Check documentation
   id: doc-check
-  uses: sebrandon1/ocp-doc-checker@main
+  uses: sebrandon1/ocp-doc-checker@v1
   with:
     url: 'https://docs.redhat.com/...'
     fail-on-outdated: false

@@ -1,0 +1,245 @@
+name: Test Fix Mode
+
+on:
+  pull_request:
+  push:
+    branches:
+      - add_fix
+  workflow_dispatch:
+
+jobs:
+  test-fix-mode:
+    name: Test Automatic URL Fixing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Create test file with outdated URLs
+        run: |
+          mkdir -p test-fix-output
+          cat > test-fix-output/test-doc.md << 'EOF'
+          # Test Documentation with Outdated URLs
+          
+          This file contains intentionally outdated OCP documentation URLs for testing.
+          
+          ## Documentation Links
+          
+          - [4.15 Networking](https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/networking/index)
+          - [4.16 Storage](https://docs.redhat.com/en/documentation/openshift_container_platform/4.16/html-single/storage/index)
+          - [4.17 Disconnected Environments](https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full)
+          
+          Inline reference: https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/security_and_compliance/index
+          
+          Another link: https://docs.redhat.com/en/documentation/openshift_container_platform/4.16/html-single/authentication_and_authorization/index
+          EOF
+
+      - name: Show original file content
+        run: |
+          echo "=========================================="
+          echo "📄 BEFORE: Original file content"
+          echo "=========================================="
+          cat test-fix-output/test-doc.md
+          echo ""
+          echo "=========================================="
+
+      - name: Run checker in check-only mode first
+        uses: ./
+        id: check-only
+        continue-on-error: true
+        with:
+          paths: 'test-fix-output/test-doc.md'
+          fail-on-outdated: false
+          verbose: true
+
+      - name: Display check-only results
+        run: |
+          echo "Check-only mode results:"
+          echo "  Total URLs: ${{ steps.check-only.outputs.total-count }}"
+          echo "  Up-to-date: ${{ steps.check-only.outputs.uptodate-count }}"
+          echo "  Outdated: ${{ steps.check-only.outputs.outdated-count }}"
+          echo "  Is Outdated: ${{ steps.check-only.outputs.is-outdated }}"
+
+      - name: Run checker with fix mode enabled
+        uses: ./
+        id: fix-mode
+        with:
+          paths: 'test-fix-output/test-doc.md'
+          fix: true
+
+      - name: Show updated file content
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "📄 AFTER: Updated file content"
+          echo "=========================================="
+          cat test-fix-output/test-doc.md
+          echo ""
+          echo "=========================================="
+
+      - name: Show git diff
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "🔍 Git Diff - Changes Made"
+          echo "=========================================="
+          git diff --no-index --word-diff=color /dev/null test-fix-output/test-doc.md || true
+          echo ""
+          echo "Detailed diff:"
+          git diff --no-index test-fix-output/test-doc.md || true
+
+      - name: Verify fixes were applied
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "✅ Verification"
+          echo "=========================================="
+          
+          # Check if old version URLs are gone (check in URL paths, not link text)
+          if grep -q "openshift_container_platform/4\.15/" test-fix-output/test-doc.md; then
+            echo "❌ ERROR: Found 4.15 URLs that should have been updated"
+            grep "openshift_container_platform/4\.15/" test-fix-output/test-doc.md
+            exit 1
+          fi
+          
+          if grep -q "openshift_container_platform/4\.16/" test-fix-output/test-doc.md; then
+            echo "❌ ERROR: Found 4.16 URLs that should have been updated"
+            grep "openshift_container_platform/4\.16/" test-fix-output/test-doc.md
+            exit 1
+          fi
+          
+          if grep -q "openshift_container_platform/4\.17/" test-fix-output/test-doc.md; then
+            echo "❌ ERROR: Found 4.17 URLs that should have been updated"
+            grep "openshift_container_platform/4\.17/" test-fix-output/test-doc.md
+            exit 1
+          fi
+          
+          # Check if file contains updated URLs with 4.19
+          if ! grep -q "openshift_container_platform/4\.19/" test-fix-output/test-doc.md; then
+            echo "❌ ERROR: No updated 4.19 URLs found"
+            exit 1
+          fi
+          
+          echo "✅ All outdated URLs successfully updated!"
+          echo "✅ No old version numbers (4.15, 4.16, 4.17) remain in URLs"
+          echo "✅ File contains updated 4.19 documentation URLs"
+
+  test-fix-mode-multiple-files:
+    name: Test Fix Mode - Multiple Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Create multiple test files
+        run: |
+          mkdir -p test-fix-multi
+          
+          cat > test-fix-multi/doc1.md << 'EOF'
+          # Document 1
+          Links: https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/networking/index
+          EOF
+          
+          cat > test-fix-multi/doc2.md << 'EOF'
+          # Document 2
+          Links: https://docs.redhat.com/en/documentation/openshift_container_platform/4.16/html-single/storage/index
+          EOF
+          
+          cat > test-fix-multi/doc3.md << 'EOF'
+          # Document 3
+          Links: https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/authentication_and_authorization/index
+          EOF
+
+      - name: Show original files
+        run: |
+          echo "Original files:"
+          echo "--- doc1.md ---"
+          cat test-fix-multi/doc1.md
+          echo "--- doc2.md ---"
+          cat test-fix-multi/doc2.md
+          echo "--- doc3.md ---"
+          cat test-fix-multi/doc3.md
+
+      - name: Run fix on entire directory
+        uses: ./
+        with:
+          paths: 'test-fix-multi/'
+          fix: true
+          verbose: true
+
+      - name: Show updated files
+        run: |
+          echo ""
+          echo "Updated files:"
+          echo "--- doc1.md ---"
+          cat test-fix-multi/doc1.md
+          echo "--- doc2.md ---"
+          cat test-fix-multi/doc2.md
+          echo "--- doc3.md ---"
+          cat test-fix-multi/doc3.md
+
+      - name: Verify all files were updated
+        run: |
+          echo "Verifying updates..."
+          
+          # Check for old version numbers in URL paths specifically
+          if grep -r "openshift_container_platform/4\.15/" test-fix-multi/; then
+            echo "❌ ERROR: Found 4.15 URLs that should have been updated"
+            exit 1
+          fi
+          
+          if grep -r "openshift_container_platform/4\.16/" test-fix-multi/; then
+            echo "❌ ERROR: Found 4.16 URLs that should have been updated"
+            exit 1
+          fi
+          
+          if grep -r "openshift_container_platform/4\.17/" test-fix-multi/; then
+            echo "❌ ERROR: Found 4.17 URLs that should have been updated"
+            exit 1
+          fi
+          
+          # Verify updated URLs are present
+          if ! grep -r "openshift_container_platform/4\.19/" test-fix-multi/; then
+            echo "❌ ERROR: No updated 4.19 URLs found"
+            exit 1
+          fi
+          
+          echo "✅ All files in directory successfully updated!"
+
+  test-fix-mode-no-outdated:
+    name: Test Fix Mode - No Outdated URLs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Create test file with current URLs
+        run: |
+          mkdir -p test-fix-current
+          cat > test-fix-current/current.md << 'EOF'
+          # Already Up-to-date
+          This file has current documentation links.
+          Link: https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/networking/index
+          EOF
+
+      - name: Run fix mode on up-to-date file
+        uses: ./
+        id: fix-current
+        with:
+          paths: 'test-fix-current/current.md'
+          fix: true
+
+      - name: Verify no changes were made
+        run: |
+          echo "File content after fix mode:"
+          cat test-fix-current/current.md
+          
+          # Verify 4.19 is still there in the URL path (wasn't changed unnecessarily)
+          if ! grep -q "openshift_container_platform/4\.19/" test-fix-current/current.md; then
+            echo "❌ ERROR: Current URLs were incorrectly modified or removed"
+            exit 1
+          fi
+          
+          echo "✅ Correctly left up-to-date URLs unchanged!"
+
+
