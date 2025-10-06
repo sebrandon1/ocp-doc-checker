@@ -25,6 +25,10 @@ inputs:
     description: 'Enable verbose output'
     required: false
     default: 'false'
+  fix:
+    description: 'Automatically fix outdated URLs in files (only works with paths, not single URL)'
+    required: false
+    default: 'false'
 
 outputs:
   is-outdated:
@@ -79,6 +83,12 @@ runs:
           exit 1
         fi
         
+        # Validate fix flag usage
+        if [ "${{ inputs.fix }}" = "true" ] && [ -n "${{ inputs.url }}" ]; then
+          echo "::error::The 'fix' option can only be used with 'paths', not with a single 'url'."
+          exit 1
+        fi
+        
         # Single URL mode
         if [ -n "${{ inputs.url }}" ]; then
           OUTPUT=$(/tmp/ocp-doc-checker -url "${{ inputs.url }}" $FLAGS -json)
@@ -122,6 +132,62 @@ runs:
         fi
         
         # Batch mode - scan paths for URLs
+        
+        # If fix mode is enabled, use the binary's built-in fix functionality
+        if [ "${{ inputs.fix }}" = "true" ]; then
+          echo "=========================================="
+          echo "🔧 FIX MODE ENABLED"
+          echo "=========================================="
+          echo "Automatically updating outdated URLs..."
+          echo ""
+          echo "### 🔧 Automatically Fixing Outdated URLs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          for path in ${{ inputs.paths }}; do
+            echo "----------------------------------------"
+            echo "Processing path: $path"
+            echo "----------------------------------------"
+            
+            if [ -f "$path" ]; then
+              echo "Type: File"
+              echo "Running: /tmp/ocp-doc-checker -dir $path -fix"
+              echo ""
+              /tmp/ocp-doc-checker -dir "$path" -fix 2>&1 || {
+                echo "::warning::Fix operation failed for $path with exit code $?"
+              }
+              echo ""
+            elif [ -d "$path" ]; then
+              echo "Type: Directory"
+              echo "Running: /tmp/ocp-doc-checker -dir $path -fix"
+              echo ""
+              /tmp/ocp-doc-checker -dir "$path" -fix 2>&1 || {
+                echo "::warning::Fix operation failed for $path with exit code $?"
+              }
+              echo ""
+            else
+              echo "::warning::Path not found: $path"
+            fi
+          done
+          
+          echo "=========================================="
+          echo "✅ FIX MODE COMPLETED"
+          echo "=========================================="
+          echo ""
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Fixes completed!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All outdated documentation URLs have been updated to their latest versions." >> $GITHUB_STEP_SUMMARY
+          
+          # Set outputs for fix mode (we don't have detailed counts in fix mode)
+          echo "is-outdated=false" >> $GITHUB_OUTPUT
+          echo "outdated-count=0" >> $GITHUB_OUTPUT
+          echo "uptodate-count=0" >> $GITHUB_OUTPUT
+          echo "total-count=0" >> $GITHUB_OUTPUT
+          
+          exit 0
+        fi
+        
+        # Check-only mode: scan and report
         echo "### 📋 OCP Documentation URL Check" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
