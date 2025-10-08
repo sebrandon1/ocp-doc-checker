@@ -2,6 +2,14 @@
 
 A tool to check if OpenShift Container Platform (OCP) documentation URLs are outdated and suggest newer versions.
 
+[![Tests](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/test.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/test.yml)
+[![Test Batch Mode](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/test-batch-mode.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/test-batch-mode.yml)
+[![Test Fix Mode](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/test-fix-mode.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/test-fix-mode.yml)
+[![Lint Markdown](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/lint-markdown.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/lint-markdown.yml)
+[![Release Binaries](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/release-binaries.yaml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/release-binaries.yaml)
+[![Update Major Tag](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/update-major-tag.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/update-major-tag.yml)
+[![Example](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/example.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/example.yml)
+
 ## Features
 
 - ✅ Check single OCP documentation URLs
