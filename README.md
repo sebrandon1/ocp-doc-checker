@@ -7,6 +7,7 @@ A tool to check if OpenShift Container Platform (OCP) documentation URLs are out
 [![Test Fix Mode](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/test-fix-mode.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/test-fix-mode.yml)
 [![Lint Markdown](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/lint-markdown.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/lint-markdown.yml)
 [![Release Binaries](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/release-binaries.yaml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/release-binaries.yaml)
+[![Publish Container Image](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/publish-container.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/publish-container.yml)
 [![Update Major Tag](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/update-major-tag.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/update-major-tag.yml)
 [![Example](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/example.yml/badge.svg)](https://github.com/sebrandon1/ocp-doc-checker/actions/workflows/example.yml)
 
@@ -20,6 +21,23 @@ A tool to check if OpenShift Container Platform (OCP) documentation URLs are out
 - 🔍 Batch processing with detailed reports
 
 ## Installation
+
+### Container Image
+
+The easiest way to use the tool without installing anything:
+
+```bash
+# Using Docker
+docker run --rm -v $(pwd):/workspace quay.io/bapalm/ocp-doc-checker:latest -dir /workspace
+
+# Using Podman
+podman run --rm -v $(pwd):/workspace:Z quay.io/bapalm/ocp-doc-checker:latest -dir /workspace
+```
+
+Images are available at `quay.io/bapalm/ocp-doc-checker` with the following tags:
+- `latest` - Latest stable release
+- `v1` - Latest v1.x release
+- `v1.x.x` - Specific version (e.g., `v1.0.0`)
 
 ### Binary
 
@@ -101,6 +119,47 @@ This will:
 ```bash
 ./ocp-doc-checker -dir ./docs -fix -verbose
 ```
+
+### Container Usage Examples
+
+All CLI examples above can be run using the container image by mounting your workspace:
+
+#### Check a single URL
+
+```bash
+docker run --rm quay.io/bapalm/ocp-doc-checker:latest \
+  -url "https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full"
+```
+
+#### Scan current directory
+
+```bash
+docker run --rm -v $(pwd):/workspace quay.io/bapalm/ocp-doc-checker:latest \
+  -dir /workspace
+```
+
+#### Scan specific files with JSON output
+
+```bash
+docker run --rm -v $(pwd):/workspace quay.io/bapalm/ocp-doc-checker:latest \
+  -dir /workspace/docs -json
+```
+
+#### Fix outdated URLs automatically
+
+```bash
+docker run --rm -v $(pwd):/workspace quay.io/bapalm/ocp-doc-checker:latest \
+  -dir /workspace/docs -fix
+```
+
+#### Using Podman (with SELinux)
+
+```bash
+podman run --rm -v $(pwd):/workspace:Z quay.io/bapalm/ocp-doc-checker:latest \
+  -dir /workspace -fix -verbose
+```
+
+**Note:** When using the container, paths must be relative to `/workspace` since that's where your local directory is mounted.
 
 ### Exit Codes
 
