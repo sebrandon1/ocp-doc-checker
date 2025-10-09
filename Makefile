@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-integration test-ci clean install fmt lint help
+.PHONY: build test test-unit test-integration test-ci clean install fmt lint build-image help
 
 BINARY_NAME=ocp-doc-checker
 VERSION?=dev
@@ -6,6 +6,11 @@ COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
+
+IMAGE_NAME?=ocp-doc-checker
+IMAGE_TAG?=$(VERSION)
+IMAGE_REGISTRY?=quay.io
+IMAGE_REPO?=$(IMAGE_REGISTRY)/$(IMAGE_NAME)
 
 all: test build
 
@@ -82,6 +87,12 @@ lint:
 		echo "golangci-lint not installed, skipping..."; \
 	fi
 
+build-image:
+	@echo "Building Docker image $(IMAGE_REPO):$(IMAGE_TAG)..."
+	docker build -t $(IMAGE_REPO):$(IMAGE_TAG) .
+	@echo "Tagging as $(IMAGE_REPO):latest..."
+	docker tag $(IMAGE_REPO):$(IMAGE_TAG) $(IMAGE_REPO):latest
+
 help:
 	@echo "Available targets:"
 	@echo "  build            - Build the binary"
@@ -93,5 +104,6 @@ help:
 	@echo "  install          - Install the binary to GOPATH/bin"
 	@echo "  fmt              - Format code"
 	@echo "  lint             - Run linters"
+	@echo "  build-image      - Build Docker image"
 	@echo "  help             - Show this help message"
 
