@@ -356,6 +356,18 @@ make install
 
 This installs the binary to `$GOPATH/bin`.
 
+### Build Container Image
+
+```bash
+make build-image
+```
+
+Builds the Docker image locally and tags it as `quay.io/ocp-doc-checker:dev` and `quay.io/ocp-doc-checker:latest`. You can customize the image name and tag:
+
+```bash
+make build-image IMAGE_REGISTRY=docker.io IMAGE_NAME=myorg/ocp-doc-checker VERSION=v1.0.0
+```
+
 ## How It Works
 
 1. **URL Parsing**: Extracts OCP version and document structure from Red Hat documentation URLs
