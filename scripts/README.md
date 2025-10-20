@@ -180,6 +180,45 @@ These scripts test the core functionality of the ocp-doc-checker CLI tool.
 
 ---
 
+### `test-anchor-validation.sh`
+
+**Purpose:** Integration test for anchor/fragment validation with real Red Hat documentation URLs.
+
+**What it tests:**
+- Validates that the tool detects missing anchors in newer versions
+- Tests the real-world SR-IOV case where content moved between documentation sections
+- Verifies that anchors are properly validated when they exist
+- Confirms URLs without anchors still work correctly
+
+**Test Cases:**
+1. **Missing Anchor Detection (SR-IOV case):**
+   - URL: `https://docs.redhat.com/.../4.17/html-single/networking/index#installing-sr-iov-operator_installing-sriov-operator`
+   - Expected: Tool detects anchor missing in 4.18/4.19, doesn't suggest upgrade
+   - This is the real bug that was found in PR reviews!
+
+2. **Valid Anchor in All Versions:**
+   - URL: `https://docs.redhat.com/.../4.17/html-single/disconnected_environments/index#mirroring-image-set-full`
+   - Expected: Tool finds newer versions because anchor exists in 4.18/4.19
+
+3. **URL Without Anchor:**
+   - URL: `https://docs.redhat.com/.../4.17/html-single/disconnected_environments/index`
+   - Expected: Normal behavior, finds newer versions
+
+**Usage:**
+```bash
+./scripts/test-anchor-validation.sh
+```
+
+**Expected behavior:**
+- All 4 test cases should pass
+- Demonstrates anchor validation prevents false positives
+- Shows verbose output with anchor status messages
+
+**Performance Note:**
+This test is slower than other tests because it fetches and parses full HTML pages from Red Hat docs to validate anchors.
+
+---
+
 ### `generate-cli-test-summary.sh`
 
 **Purpose:** Generate a formatted summary of CLI test results.

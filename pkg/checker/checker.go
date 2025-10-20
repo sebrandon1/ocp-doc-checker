@@ -2,20 +2,25 @@ package checker
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/sebrandon1/ocp-doc-checker/pkg/parser"
+	"golang.org/x/net/html"
 )
 
 // VersionCheckResult represents the result of checking a version
 type VersionCheckResult struct {
-	Version   string
-	URL       string
-	Exists    bool
-	Error     error
-	CheckedAt time.Time
+	Version      string
+	URL          string
+	Exists       bool
+	AnchorExists bool // true if URL has anchor and it exists, false if URL has anchor but doesn't exist, N/A if no anchor
+	HasAnchor    bool // true if URL contains a fragment/anchor
+	Error        error
+	CheckedAt    time.Time
 }
 
 // CheckResult represents the complete check result
@@ -79,19 +84,22 @@ func (c *Checker) Check(rawURL string) (*CheckResult, error) {
 	// Check each version
 	for _, version := range versionsToCheck {
 		checkURL := docURL.BuildURL(version)
-		exists, err := c.checkURL(checkURL)
+		exists, anchorExists, hasAnchor, err := c.checkURL(checkURL)
 
 		versionResult := VersionCheckResult{
-			Version:   version,
-			URL:       checkURL,
-			Exists:    exists,
-			Error:     err,
-			CheckedAt: time.Now(),
+			Version:      version,
+			URL:          checkURL,
+			Exists:       exists,
+			AnchorExists: anchorExists,
+			HasAnchor:    hasAnchor,
+			Error:        err,
+			CheckedAt:    time.Now(),
 		}
 
 		result.AllResults = append(result.AllResults, versionResult)
 
-		if exists {
+		// Only consider it a valid newer version if both page and anchor (if present) exist
+		if exists && (!hasAnchor || anchorExists) {
 			result.NewerVersions = append(result.NewerVersions, versionResult)
 		}
 	}
@@ -108,40 +116,119 @@ func (c *Checker) Check(rawURL string) (*CheckResult, error) {
 	return result, nil
 }
 
-// checkURL checks if a URL exists and returns 200 OK with retry logic
-func (c *Checker) checkURL(url string) (bool, error) {
+// checkURL checks if a URL exists and validates anchor if present
+// Returns: (pageExists, anchorExists, hasAnchor, error)
+func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
 	maxRetries := 3
 	var lastErr error
-	
+
+	// Parse URL to extract fragment/anchor
+	fragment := ""
+	baseURL := urlString
+	if idx := strings.Index(urlString, "#"); idx != -1 {
+		fragment = urlString[idx+1:]
+		baseURL = urlString[:idx]
+	}
+
+	hasAnchor := fragment != ""
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			// Wait a bit before retrying (exponential backoff)
 			time.Sleep(time.Duration(attempt) * 2 * time.Second)
 		}
-		
-		resp, err := c.client.Head(url)
-		if err != nil {
-			// If HEAD fails, try GET
-			resp, err = c.client.Get(url)
+
+		// First check if the base URL exists
+		var resp *http.Response
+		var err error
+
+		if hasAnchor {
+			// If we need to check anchor, use GET to fetch the HTML
+			resp, err = c.client.Get(baseURL)
+		} else {
+			// No anchor, use HEAD for efficiency
+			resp, err = c.client.Head(baseURL)
 			if err != nil {
-				lastErr = err
-				continue // Retry
+				// If HEAD fails, try GET
+				resp, err = c.client.Get(baseURL)
 			}
+		}
+
+		if err != nil {
+			lastErr = err
+			continue // Retry
 		}
 		defer resp.Body.Close()
 
-		// Consider 2xx and 3xx status codes as existing
-		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-			return true, nil
-		}
-		
-		// If we get a 4xx or 5xx, no point retrying
+		// Check if page exists
 		if resp.StatusCode >= 400 {
-			return false, nil
+			// 4xx or 5xx - page doesn't exist, no point retrying
+			return false, false, hasAnchor, nil
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+			// Unexpected status code
+			continue // Retry
+		}
+
+		// Page exists (2xx or 3xx)
+		pageExists := true
+
+		// If no anchor, we're done
+		if !hasAnchor {
+			return pageExists, false, hasAnchor, nil
+		}
+
+		// Validate anchor exists in HTML
+		anchorExists, err := c.checkAnchorInHTML(resp.Body, fragment)
+		if err != nil {
+			lastErr = err
+			continue // Retry
+		}
+
+		return pageExists, anchorExists, hasAnchor, nil
+	}
+
+	return false, false, hasAnchor, lastErr
+}
+
+// checkAnchorInHTML parses HTML and checks if an anchor/fragment exists
+func (c *Checker) checkAnchorInHTML(body io.Reader, anchor string) (bool, error) {
+	doc, err := html.Parse(body)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	found := false
+	var checkNode func(*html.Node)
+	checkNode = func(n *html.Node) {
+		if found {
+			return
+		}
+
+		if n.Type == html.ElementNode {
+			// Check for id attribute
+			for _, attr := range n.Attr {
+				if attr.Key == "id" && attr.Val == anchor {
+					found = true
+					return
+				}
+				// Also check for name attribute (older HTML anchor style)
+				if n.Data == "a" && attr.Key == "name" && attr.Val == anchor {
+					found = true
+					return
+				}
+			}
+		}
+
+		// Recursively check child nodes
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			checkNode(child)
 		}
 	}
-	
-	return false, lastErr
+
+	checkNode(doc)
+	return found, nil
 }
 
 // getNewerVersions returns versions newer than the given version

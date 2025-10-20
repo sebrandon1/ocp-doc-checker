@@ -382,7 +382,15 @@ func printTextResults(result *checker.CheckResult, verbose bool) {
 			for _, v := range result.AllResults {
 				status := "✗ Not found"
 				if v.Exists {
-					status = "✓ Found"
+					if v.HasAnchor {
+						if v.AnchorExists {
+							status = "✓ Found (page + anchor)"
+						} else {
+							status = "⚠ Page found, anchor missing"
+						}
+					} else {
+						status = "✓ Found"
+					}
 				}
 				fmt.Printf("  %s Version %s: %s\n", status, v.Version, v.URL)
 			}
@@ -390,12 +398,35 @@ func printTextResults(result *checker.CheckResult, verbose bool) {
 	} else {
 		fmt.Printf("✓ This documentation is UP TO DATE (version %s)\n", result.LatestVersion)
 
+		// Check if there are newer versions with missing anchors
+		missingAnchors := []checker.VersionCheckResult{}
+		for _, v := range result.AllResults {
+			if v.Exists && v.HasAnchor && !v.AnchorExists {
+				missingAnchors = append(missingAnchors, v)
+			}
+		}
+
+		if len(missingAnchors) > 0 {
+			fmt.Println("\n⚠️  Note: Newer versions exist but the anchor is missing:")
+			for _, v := range missingAnchors {
+				fmt.Printf("  - Version %s: page exists but anchor not found\n", v.Version)
+			}
+		}
+
 		if verbose {
 			fmt.Println("\nChecked versions:")
 			for _, v := range result.AllResults {
 				status := "✗ Not found"
 				if v.Exists {
-					status = "✓ Found"
+					if v.HasAnchor {
+						if v.AnchorExists {
+							status = "✓ Found (page + anchor)"
+						} else {
+							status = "⚠ Page found, anchor missing"
+						}
+					} else {
+						status = "✓ Found"
+					}
 				}
 				fmt.Printf("  %s Version %s\n", status, v.Version)
 			}

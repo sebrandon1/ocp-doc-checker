@@ -61,9 +61,13 @@ jobs:
         id: test5
         run: ./scripts/test-url-replacement.sh
 
+      - name: Test 6 - Anchor validation with real docs
+        id: test6
+        run: ./scripts/test-anchor-validation.sh
+
       - name: Test Summary
         if: always()
-        run: ./scripts/generate-cli-test-summary.sh "${{ steps.test1.outcome }}" "${{ steps.test2.outcome }}" "${{ steps.test3.outcome }}" "${{ steps.test4.outcome }}" "${{ steps.test5.outcome }}"
+        run: ./scripts/generate-cli-test-summary.sh "${{ steps.test1.outcome }}" "${{ steps.test2.outcome }}" "${{ steps.test3.outcome }}" "${{ steps.test4.outcome }}" "${{ steps.test5.outcome }}" "${{ steps.test6.outcome }}"
 
   test-action:
     name: Test GitHub Action
