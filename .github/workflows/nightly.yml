@@ -1,0 +1,84 @@
+name: Nightly Integration Tests
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  nightly-tests:
+    name: Nightly Integration Tests with Real Docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build tool
+        run: go build -o ocp-doc-checker .
+
+      - name: Run Go unit tests
+        run: go test -v ./...
+
+      - name: Run comprehensive integration test suite
+        run: ./test.sh
+
+      - name: Run anchor validation tests (detailed)
+        run: ./scripts/test-anchor-validation.sh
+
+      - name: Test batch mode
+        run: |
+          echo "Testing batch mode with multiple URLs..."
+          mkdir -p test-docs
+          cat > test-docs/test.md << 'EOF'
+          # Test Document
+          
+          Some links:
+          - https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/networking/index#installing-sr-iov-operator_installing-sriov-operator
+          - https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full
+          - https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/authentication_and_authorization/index
+          EOF
+          
+          ./ocp-doc-checker -dir test-docs -verbose
+
+      - name: Test outdated URL detection
+        run: ./scripts/test-outdated-url.sh
+
+      - name: Test current URL validation
+        run: ./scripts/test-current-url.sh
+
+      - name: Test URL accessibility
+        run: ./scripts/test-url-accessibility.sh
+
+      - name: Test invalid URL handling
+        run: ./scripts/test-invalid-url.sh
+
+      - name: Test URL replacement
+        run: ./scripts/test-url-replacement.sh
+
+      - name: Create summary report
+        if: always()
+        run: |
+          echo "## Nightly Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Ran comprehensive integration tests against real Red Hat documentation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ All tests completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tests included:" >> $GITHUB_STEP_SUMMARY
+          echo "- Go unit tests" >> $GITHUB_STEP_SUMMARY
+          echo "- Full integration test suite (test.sh)" >> $GITHUB_STEP_SUMMARY
+          echo "- Anchor validation with real URLs" >> $GITHUB_STEP_SUMMARY
+          echo "- Batch mode testing" >> $GITHUB_STEP_SUMMARY
+          echo "- Individual CLI tests" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Nightly integration tests failed! Check the logs for details."
+

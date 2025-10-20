@@ -212,6 +212,63 @@ test_version_comparison() {
     return 0
 }
 
+# Test 7: Anchor validation with real URLs
+test_anchor_validation() {
+    echo "Testing anchor validation with real Red Hat documentation..."
+    
+    # Test the SR-IOV case where anchor is missing in newer versions
+    local url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/networking/index#installing-sr-iov-operator_installing-sriov-operator"
+    
+    set +e
+    OUTPUT=$(./ocp-doc-checker -url "$url" -json 2>&1)
+    EXIT_CODE=$?
+    set -e
+    
+    echo "Testing SR-IOV URL where anchor moved in newer versions..."
+    
+    # Expected: is_outdated = false (no valid newer versions because anchor missing)
+    IS_OUTDATED=$(echo "$OUTPUT" | jq -r '.is_outdated')
+    if [ "$IS_OUTDATED" != "false" ]; then
+        echo "Expected is_outdated=false (anchor missing in 4.18/4.19), got $IS_OUTDATED"
+        return 1
+    fi
+    
+    # Expected: newer_versions = 0 (anchor doesn't exist in newer versions)
+    NEWER_COUNT=$(echo "$OUTPUT" | jq '.newer_versions | length')
+    if [ "$NEWER_COUNT" != "0" ]; then
+        echo "Expected 0 newer versions (anchor missing), got $NEWER_COUNT"
+        return 1
+    fi
+    
+    echo "✓ Correctly detected missing anchor in newer versions (SR-IOV case)"
+    
+    # Test URL with anchor that exists in all versions
+    local url2="https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full"
+    
+    set +e
+    OUTPUT2=$(./ocp-doc-checker -url "$url2" -json 2>&1)
+    set -e
+    
+    echo "Testing URL where anchor exists in all versions..."
+    
+    # Expected: Should find newer versions
+    IS_OUTDATED2=$(echo "$OUTPUT2" | jq -r '.is_outdated')
+    if [ "$IS_OUTDATED2" != "true" ]; then
+        echo "Expected is_outdated=true (anchor exists in newer versions), got $IS_OUTDATED2"
+        return 1
+    fi
+    
+    NEWER_COUNT2=$(echo "$OUTPUT2" | jq '.newer_versions | length')
+    if [ "$NEWER_COUNT2" -lt 1 ]; then
+        echo "Expected at least 1 newer version (anchor exists), got $NEWER_COUNT2"
+        return 1
+    fi
+    
+    echo "✓ Correctly found newer versions when anchor exists"
+    echo "Anchor validation working correctly!"
+    return 0
+}
+
 # Main execution
 main() {
     echo "======================================"
@@ -237,6 +294,7 @@ main() {
     run_test "Test 4: Invalid URL Handling" test_invalid_url || true
     run_test "Test 5: Anchor Preservation" test_anchor_preservation || true
     run_test "Test 6: Version Comparison" test_version_comparison || true
+    run_test "Test 7: Anchor Validation (Real URLs)" test_anchor_validation || true
     
     # Summary
     echo ""
