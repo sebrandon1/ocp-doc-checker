@@ -93,7 +93,7 @@ jobs:
         id: test_current
         uses: ./
         with:
-          url: 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/disconnected_environments/index#mirroring-image-set-partial'
+          url: 'https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/disconnected_environments/index#mirroring-image-set-partial'
           fail-on-outdated: false
           verbose: true
 

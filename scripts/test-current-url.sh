@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-echo "Testing current 4.19 URL (expect success/exit code 0)..."
-./ocp-doc-checker -url "https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/disconnected_environments/index#mirroring-image-set-partial" -json > test2_output.json
+echo "Testing current 4.20 URL (expect success/exit code 0)..."
+./ocp-doc-checker -url "https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/disconnected_environments/index#mirroring-image-set-partial" -json > test2_output.json
 EXIT_CODE=$?
 
 cat test2_output.json
@@ -20,10 +20,10 @@ if [ "$IS_OUTDATED" != "false" ]; then
   exit 1
 fi
 
-# Check latest version is 4.19
+# Check latest version is 4.20
 LATEST=$(jq -r '.latest_version' test2_output.json)
-if [ "$LATEST" != "4.19" ]; then
-  echo "❌ FAIL: Expected latest_version=4.19, got $LATEST"
+if [ "$LATEST" != "4.20" ]; then
+  echo "❌ FAIL: Expected latest_version=4.20, got $LATEST"
   exit 1
 fi
 
