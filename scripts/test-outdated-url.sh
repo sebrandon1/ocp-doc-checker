@@ -55,7 +55,7 @@ fi
 echo "✓ Found $NEWER_COUNT newer version(s)"
 
 echo ""
-echo "Step 6: Verifying 4.19 is in newer versions..."
+echo "Step 6: Verifying 4.19 and 4.20 are in newer versions..."
 echo "All newer versions:"
 jq -r '.newer_versions[] | "\(.version): \(.url)"' test1_output.json
 
@@ -67,6 +67,15 @@ if [ "$HAS_419" != "4.19" ]; then
   exit 1
 fi
 echo "✓ Version 4.19 found"
+
+HAS_420=$(jq -r '.newer_versions[] | select(.version=="4.20") | .version' test1_output.json)
+echo ""
+echo "4.20 version found: $HAS_420"
+if [ "$HAS_420" != "4.20" ]; then
+  echo "❌ FAIL: Expected version 4.20 in newer versions"
+  exit 1
+fi
+echo "✓ Version 4.20 found"
 
 echo ""
 echo "=========================================="

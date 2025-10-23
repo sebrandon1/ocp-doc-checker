@@ -72,9 +72,9 @@ test_outdated_url() {
 
 # Test 2: Current URL should pass
 test_current_url() {
-    echo "Testing current 4.19 URL..."
+    echo "Testing current 4.20 URL..."
     
-    local url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/disconnected_environments/index#mirroring-image-set-partial"
+    local url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/disconnected_environments/index#mirroring-image-set-partial"
     
     set +e
     OUTPUT=$(./ocp-doc-checker -url "$url" -json 2>&1)
@@ -96,10 +96,10 @@ test_current_url() {
         return 1
     fi
     
-    # Expected: latest_version = 4.19
+    # Expected: latest_version = 4.20
     LATEST=$(echo "$OUTPUT" | jq -r '.latest_version')
-    if [ "$LATEST" != "4.19" ]; then
-        echo "Expected latest_version=4.19, got $LATEST"
+    if [ "$LATEST" != "4.20" ]; then
+        echo "Expected latest_version=4.20, got $LATEST"
         return 1
     fi
     
@@ -111,14 +111,14 @@ test_url_replacement() {
     echo "Testing specific URL replacement..."
     
     local input_url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full"
-    local expected_url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/disconnected_environments/index#mirroring-image-set-full"
+    local expected_url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/disconnected_environments/index#mirroring-image-set-full"
     
     set +e
     OUTPUT=$(./ocp-doc-checker -url "$input_url" -json 2>&1)
     set -e
     
-    # Extract 4.19 URL
-    ACTUAL_URL=$(echo "$OUTPUT" | jq -r '.newer_versions[] | select(.version=="4.19") | .url')
+    # Extract 4.20 URL
+    ACTUAL_URL=$(echo "$OUTPUT" | jq -r '.newer_versions[] | select(.version=="4.20") | .url')
     
     if [ "$ACTUAL_URL" != "$expected_url" ]; then
         echo "URL replacement mismatch:"
