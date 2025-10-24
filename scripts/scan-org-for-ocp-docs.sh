@@ -38,7 +38,9 @@ OPTIONS:
                     • Committing and pushing changes to each repository
                     • Creating forks (if needed)
                     • Creating pull requests
-                  Note: Automatically skips repos with existing open PRs from you
+                  Note: If you already have an open PR, it will checkout that
+                  branch, re-run the checker, and force-push updates if needed.
+                  This ensures existing PRs stay current with latest OCP versions
   
   --force         Non-interactive mode. Automatically accepts all prompts.
                   Use with --fix to run without user interaction.
@@ -65,6 +67,10 @@ EXAMPLES:
 
   # Scan, fix, and link all PRs to a tracking issue
   $0 --fix --link-to https://github.com/sebrandon1/ocp-doc-checker/issues/18 openshift-kni
+  
+  # Update existing PRs with latest OCP versions (e.g., after 4.20 release)
+  # The script will checkout existing PR branches and re-run the checker
+  $0 --fix openshift-kni
 
   # Non-interactive mode - automatically accept all prompts
   $0 --fix --force openshift-kni
@@ -217,6 +223,11 @@ fi
 ORG_NAME="$1"
 OUTPUT_FILE="${2:-ocp-docs-scan-results.txt}"
 
+# Convert OUTPUT_FILE to absolute path to avoid writing to repo directories
+if [[ ! "$OUTPUT_FILE" = /* ]]; then
+    OUTPUT_FILE="$(pwd)/${OUTPUT_FILE}"
+fi
+
 # OCP documentation URL patterns to search for
 DOC_PATTERN="docs\.redhat\.com/en/documentation/openshift_container_platform"
 
@@ -362,28 +373,82 @@ fix_and_create_pr() {
     
     # Check if there's already an open PR from this user for OCP docs
     echo -e "    ${YELLOW}Checking for existing open PRs...${NC}"
-    local existing_prs=$(gh pr list --repo "$repo" --author "$username" --state open --search "OCP documentation" --json number,title,headRefName --limit 10 2>/dev/null || echo "[]")
+    local existing_prs=$(gh pr list --repo "$repo" --author "$username" --state open --search "OCP documentation" --json number,title,headRefName --limit 10 2>&1)
+    
+    # Validate that we got valid JSON
+    if ! echo "$existing_prs" | jq empty 2>/dev/null; then
+        # Not valid JSON, likely an error - treat as no PRs
+        existing_prs="[]"
+    fi
+    
     local pr_count=$(echo "$existing_prs" | jq '. | length' 2>/dev/null || echo "0")
     
+    # Check for existing PR and get branch name
+    local existing_pr_num=""
+    local existing_branch=""
     if [ "$pr_count" -gt 0 ]; then
         # Check if any PR has our title or branch prefix
-        local has_matching_pr=$(echo "$existing_prs" | jq -r '.[] | select(.title | contains("Update OCP documentation")) | .number' | head -1)
-        local has_matching_branch=$(echo "$existing_prs" | jq -r '.[] | select(.headRefName | startswith("update-ocp-docs-")) | .number' | head -1)
+        local matching_pr=$(echo "$existing_prs" | jq -r '.[] | select(.title | contains("Update OCP documentation") or (.headRefName | startswith("update-ocp-docs-"))) | {number: .number, branch: .headRefName} | @json' 2>/dev/null | head -1)
         
-        if [ -n "$has_matching_pr" ] || [ -n "$has_matching_branch" ]; then
-            local pr_num="${has_matching_pr:-$has_matching_branch}"
-            local pr_url="https://github.com/$repo/pull/$pr_num"
-            echo -e "    ${YELLOW}⚠ Open PR already exists: #${pr_num}${NC}"
+        if [ -n "$matching_pr" ]; then
+            existing_pr_num=$(echo "$matching_pr" | jq -r '.number')
+            existing_branch=$(echo "$matching_pr" | jq -r '.branch')
+            local pr_url="https://github.com/$repo/pull/$existing_pr_num"
+            echo -e "    ${YELLOW}⚠ Open PR already exists: #${existing_pr_num}${NC}"
             echo -e "    ${BLUE}  $pr_url${NC}"
-            echo -e "    ${GREEN}✓ Skipping - no duplicate work needed${NC}"
-            return 0
+            echo -e "    ${BLUE}  Branch: ${existing_branch}${NC}"
+            echo -e "    ${YELLOW}↻ Will checkout and update the existing PR with latest changes${NC}"
         fi
+    fi
+    
+    # Navigate to repo directory
+    cd "$repo_dir"
+    
+    # If there's an existing PR, checkout its branch from the fork
+    if [ -n "$existing_pr_num" ]; then
+        local repo_name=$(basename "$repo")
+        local fork_url="https://github.com/${username}/${repo_name}.git"
+        
+        # Add fork as remote if not already added
+        if ! git remote get-url fork &> /dev/null; then
+            echo -e "    ${YELLOW}Adding fork remote...${NC}"
+            git remote add fork "$fork_url"
+        fi
+        
+        # Fetch the fork
+        echo -e "    ${YELLOW}Fetching fork...${NC}"
+        if ! git fetch fork "$existing_branch" > /dev/null 2>&1; then
+            echo -e "    ${RED}✗ Failed to fetch branch from fork${NC}"
+            cd - > /dev/null
+            return 1
+        fi
+        
+        # Checkout the existing PR branch
+        echo -e "    ${YELLOW}Checking out branch: ${existing_branch}${NC}"
+        if ! git checkout -B "$existing_branch" "fork/$existing_branch" > /dev/null 2>&1; then
+            echo -e "    ${RED}✗ Failed to checkout branch${NC}"
+            cd - > /dev/null
+            return 1
+        fi
+        
+        echo -e "    ${GREEN}✓ Checked out existing PR branch${NC}"
+        
+        # Clean up any scan result files that may have been committed in previous runs
+        if [ -f "ocp-docs-scan-results.txt" ] || [ -f "ocp-docs-scan-results.txt.prs" ]; then
+            echo -e "    ${YELLOW}Cleaning up old scan result files from previous commits...${NC}"
+            git rm -f ocp-docs-scan-results.txt ocp-docs-scan-results.txt.prs 2>/dev/null || true
+            rm -f ocp-docs-scan-results.txt ocp-docs-scan-results.txt.prs 2>/dev/null || true
+        fi
+    fi
+    
+    # Also clean up any scan result files in newly cloned repos
+    if [ -f "ocp-docs-scan-results.txt" ] || [ -f "ocp-docs-scan-results.txt.prs" ]; then
+        rm -f ocp-docs-scan-results.txt ocp-docs-scan-results.txt.prs 2>/dev/null || true
     fi
     
     echo -e "    ${YELLOW}Running ocp-doc-checker in fix mode...${NC}"
     
     # Run ocp-doc-checker on the directory
-    cd "$repo_dir"
     
     # Capture the output for diagnostics and run the checker
     checker_output=$($OCP_CHECKER -dir . -fix 2>&1)
@@ -408,31 +473,43 @@ fix_and_create_pr() {
         # Get repo name
         local repo_name=$(basename "$repo")
         
-        # Check if fork exists, create if not
-        if ! check_fork_exists "$repo"; then
-            # Prompt before creating fork
-            if ! prompt_user "    Fork of $repo doesn't exist. Create fork?"; then
-                echo -e "    ${YELLOW}⊘ Fork creation skipped - cannot proceed without fork${NC}"
-                cd - > /dev/null
-                return 1
+        # Determine if we're updating an existing PR or creating a new one
+        local is_updating_pr=false
+        local branch_name=""
+        
+        if [ -n "$existing_pr_num" ]; then
+            # Updating existing PR - use the existing branch
+            branch_name="$existing_branch"
+            is_updating_pr=true
+            echo -e "    ${BLUE}ℹ Updating existing PR branch: ${branch_name}${NC}"
+        else
+            # Creating new PR - check fork exists and create new branch
+            if ! check_fork_exists "$repo"; then
+                # Prompt before creating fork
+                if ! prompt_user "    Fork of $repo doesn't exist. Create fork?"; then
+                    echo -e "    ${YELLOW}⊘ Fork creation skipped - cannot proceed without fork${NC}"
+                    cd - > /dev/null
+                    return 1
+                fi
+                
+                if ! create_fork "$repo"; then
+                    echo -e "    ${RED}✗ Cannot proceed without fork${NC}"
+                    cd - > /dev/null
+                    return 1
+                fi
+            else
+                echo -e "    ${GREEN}✓ Fork already exists${NC}"
             fi
             
-            if ! create_fork "$repo"; then
-                echo -e "    ${RED}✗ Cannot proceed without fork${NC}"
-                cd - > /dev/null
-                return 1
-            fi
-        else
-            echo -e "    ${GREEN}✓ Fork already exists${NC}"
+            # Create a new branch
+            branch_name="update-ocp-docs-$(date +%Y%m%d-%H%M%S)"
+            echo -e "    ${YELLOW}Creating branch: $branch_name${NC}"
+            git checkout -b "$branch_name" > /dev/null 2>&1
         fi
         
-        # Create a new branch
-        local branch_name="update-ocp-docs-$(date +%Y%m%d-%H%M%S)"
-        echo -e "    ${YELLOW}Creating branch: $branch_name${NC}"
-        git checkout -b "$branch_name" > /dev/null 2>&1
-        
-        # Stage all changes
-        git add -A
+        # Stage only modified tracked files (not untracked/new files)
+        # This prevents accidentally committing script output files or other artifacts
+        git add -u
         
         # Create commit
         local commit_msg="Update OCP documentation links to latest versions
@@ -453,25 +530,52 @@ More info: https://github.com/sebrandon1/ocp-doc-checker"
         fi
         
         # Push to fork
-        echo -e "    ${YELLOW}Pushing to fork...${NC}"
-        if git push -u fork "$branch_name" > /dev/null 2>&1; then
-            echo -e "    ${GREEN}✓ Pushed to fork${NC}"
-            
-            # Prompt before creating PR
-            echo ""
-            echo -e "    ${BLUE}Branch ${branch_name} has been pushed to your fork.${NC}"
-            if ! prompt_user "    Create pull request for $repo?"; then
-                echo -e "    ${YELLOW}⊘ Pull request creation skipped${NC}"
-                echo -e "    ${BLUE}ℹ You can manually create a PR later from:${NC}"
-                echo -e "      ${username}:${branch_name} -> ${repo}:${default_branch}"
+        if [ "$is_updating_pr" = true ]; then
+            # Force push to update existing PR
+            echo -e "    ${YELLOW}Force pushing to update existing PR...${NC}"
+            if git push -f fork "$branch_name" > /dev/null 2>&1; then
+                echo -e "    ${GREEN}✓ Force pushed to fork - PR updated${NC}"
+                
+                # Add a comment to the PR
+                local comment="Updated with latest OCP documentation links (ran ocp-doc-checker again).
+
+All documentation URLs now point to the latest available versions."
+                
+                echo -e "    ${YELLOW}Adding comment to PR...${NC}"
+                if gh pr comment "$existing_pr_num" --repo "$repo" --body "$comment" > /dev/null 2>&1; then
+                    echo -e "    ${GREEN}✓ Comment added to PR #${existing_pr_num}${NC}"
+                fi
+                
+                local pr_url="https://github.com/$repo/pull/$existing_pr_num"
+                echo -e "    ${GREEN}✓ Pull request updated: $pr_url${NC}"
                 cd - > /dev/null
                 return 0
+            else
+                echo -e "    ${RED}✗ Failed to push to fork${NC}"
+                cd - > /dev/null
+                return 1
             fi
-            
-            # Create pull request
-            echo -e "    ${YELLOW}Creating pull request...${NC}"
-            local pr_title="Update OCP documentation links to latest versions"
-            local pr_body="This PR updates OpenShift Container Platform documentation URLs to point to the latest available versions.
+        else
+            # Regular push for new PR
+            echo -e "    ${YELLOW}Pushing to fork...${NC}"
+            if git push -u fork "$branch_name" > /dev/null 2>&1; then
+                echo -e "    ${GREEN}✓ Pushed to fork${NC}"
+                
+                # Prompt before creating PR
+                echo ""
+                echo -e "    ${BLUE}Branch ${branch_name} has been pushed to your fork.${NC}"
+                if ! prompt_user "    Create pull request for $repo?"; then
+                    echo -e "    ${YELLOW}⊘ Pull request creation skipped${NC}"
+                    echo -e "    ${BLUE}ℹ You can manually create a PR later from:${NC}"
+                    echo -e "      ${username}:${branch_name} -> ${repo}:${default_branch}"
+                    cd - > /dev/null
+                    return 0
+                fi
+                
+                # Create pull request
+                echo -e "    ${YELLOW}Creating pull request...${NC}"
+                local pr_title="Update OCP documentation links to latest versions"
+                local pr_body="This PR updates OpenShift Container Platform documentation URLs to point to the latest available versions.
 
 ## Changes
 - Automatically updated OCP documentation links using [ocp-doc-checker](https://github.com/sebrandon1/ocp-doc-checker)
@@ -482,30 +586,36 @@ This PR was created automatically by scanning the repository with \`ocp-doc-chec
 
 Repository: https://github.com/sebrandon1/ocp-doc-checker"
 
-            # Add tracking issue link if provided
-            if [ -n "$TRACKING_LINK" ]; then
-                pr_body="${pr_body}
+                # Add tracking issue link if provided
+                if [ -n "$TRACKING_LINK" ]; then
+                    pr_body="${pr_body}
 
 ---
 
 **Tracking Issue:** ${TRACKING_LINK}"
-            fi
-            
-            if pr_url=$(gh pr create --repo "$repo" --base "$default_branch" --head "${username}:${branch_name}" --title "$pr_title" --body "$pr_body" 2>&1); then
-                echo -e "    ${GREEN}✓ Pull request created: $pr_url${NC}"
-                echo "$pr_url" >> "${OUTPUT_FILE}.prs"
-                return 0
+                fi
+                
+                if pr_url=$(gh pr create --repo "$repo" --base "$default_branch" --head "${username}:${branch_name}" --title "$pr_title" --body "$pr_body" 2>&1); then
+                    echo -e "    ${GREEN}✓ Pull request created: $pr_url${NC}"
+                    echo "$pr_url" >> "${OUTPUT_FILE}.prs"
+                    return 0
+                else
+                    echo -e "    ${RED}✗ Failed to create PR: $pr_url${NC}"
+                    return 1
+                fi
             else
-                echo -e "    ${RED}✗ Failed to create PR: $pr_url${NC}"
+                echo -e "    ${RED}✗ Failed to push to fork${NC}"
                 return 1
             fi
-        else
-            echo -e "    ${RED}✗ Failed to push to fork${NC}"
-            return 1
         fi
     else
         # No changes were made, determine why
-        if [ $checker_exit_code -eq 0 ]; then
+        if [ -n "$existing_pr_num" ]; then
+            # Existing PR is already up-to-date
+            echo -e "    ${GREEN}✓ Existing PR #${existing_pr_num} is already up to date - no changes needed${NC}"
+            local pr_url="https://github.com/$repo/pull/$existing_pr_num"
+            echo -e "    ${BLUE}  $pr_url${NC}"
+        elif [ $checker_exit_code -eq 0 ]; then
             echo -e "    ${GREEN}✓ No changes needed - docs are already up to date${NC}"
         else
             # Check if there were any OCP doc URLs found
