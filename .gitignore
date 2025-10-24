@@ -36,3 +36,7 @@ Thumbs.db
 tmp/
 temp/
 .cursor/
+
+# Scan script output files
+ocp-docs-scan-results.txt
+ocp-docs-scan-results.txt.prs
