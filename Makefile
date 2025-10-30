@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-integration test-ci clean install fmt lint build-image help
+.PHONY: build test test-unit test-integration test-ci clean install fmt lint build-image help scan-openshift scan-redhat-openshift-ecosystem scan-openshift-kni scan-redhatci
 
 BINARY_NAME=ocp-doc-checker
 VERSION?=dev
@@ -93,6 +93,22 @@ build-image:
 	@echo "Tagging as $(IMAGE_REPO):latest..."
 	docker tag $(IMAGE_REPO):$(IMAGE_TAG) $(IMAGE_REPO):latest
 
+scan-openshift:
+	@echo "Scanning openshift org with --fix and linking to issue #18..."
+	./scripts/scan-org-for-ocp-docs.sh --fix --link-to https://github.com/sebrandon1/ocp-doc-checker/issues/18 openshift
+
+scan-redhat-openshift-ecosystem:
+	@echo "Scanning redhat-openshift-ecosystem org with --fix and linking to issue #23..."
+	./scripts/scan-org-for-ocp-docs.sh --fix --link-to https://github.com/sebrandon1/ocp-doc-checker/issues/23 redhat-openshift-ecosystem
+
+scan-openshift-kni:
+	@echo "Scanning openshift-kni org with --fix and linking to issue #21..."
+	./scripts/scan-org-for-ocp-docs.sh --fix --link-to https://github.com/sebrandon1/ocp-doc-checker/issues/21 openshift-kni
+
+scan-redhatci:
+	@echo "Scanning redhatci org with --fix and linking to issue #22..."
+	./scripts/scan-org-for-ocp-docs.sh --fix --link-to https://github.com/sebrandon1/ocp-doc-checker/issues/22 redhatci
+
 help:
 	@echo "Available targets:"
 	@echo "  build            - Build the binary"
@@ -105,5 +121,9 @@ help:
 	@echo "  fmt              - Format code"
 	@echo "  lint             - Run linters"
 	@echo "  build-image      - Build Docker image"
+	@echo "  scan-openshift   - Scan openshift org with --fix (issue #18)"
+	@echo "  scan-redhat-openshift-ecosystem - Scan redhat-openshift-ecosystem org with --fix (issue #23)"
+	@echo "  scan-openshift-kni - Scan openshift-kni org with --fix (issue #21)"
+	@echo "  scan-redhatci    - Scan redhatci org with --fix (issue #22)"
 	@echo "  help             - Show this help message"
 
