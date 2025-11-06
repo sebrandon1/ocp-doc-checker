@@ -52,6 +52,12 @@ OPTIONS:
                   "Tracking Issue: <URL>"
                   Example: --link-to https://github.com/owner/repo/issues/18
   
+  --blocklist FILE
+                  Path to YAML file containing repositories to skip.
+                  If not specified, looks for blocklist in:
+                    1. ~/.config/ocp-doc-scanner/blocklist.yaml
+                    2. ./scripts/blocklist.yaml
+  
   --cache-info    Display information about cached repositories
   --clear-cache   Clear the repository cache
 
@@ -61,6 +67,9 @@ EXAMPLES:
 
   # Scan and save to custom output file
   $0 openshift-kni my-scan-results.txt
+
+  # Scan with custom blocklist file
+  $0 --blocklist /path/to/blocklist.yaml openshift
 
   # Scan and automatically fix + create PRs (interactive)
   $0 --fix openshift-kni
@@ -75,8 +84,8 @@ EXAMPLES:
   # Non-interactive mode - automatically accept all prompts
   $0 --fix --force openshift-kni
 
-  # Full automation with tracking issue
-  $0 --fix --force --link-to https://github.com/owner/repo/issues/18 openshift
+  # Full automation with tracking issue and blocklist
+  $0 --fix --force --blocklist ./blocklist.yaml --link-to https://github.com/owner/repo/issues/18 openshift
 
   # View cache information
   $0 --cache-info
@@ -127,8 +136,21 @@ fi
 FIX_MODE=false
 FORCE_MODE=false
 TRACKING_LINK=""
+BLOCKLIST_FILE=""
 while [[ "$1" =~ ^-- ]]; do
     case "$1" in
+        --blocklist)
+            if [ -z "$2" ] || [[ "$2" =~ ^-- ]]; then
+                echo -e "${RED}Error: --blocklist requires a file path argument${NC}"
+                exit 1
+            fi
+            BLOCKLIST_FILE="$2"
+            if [ ! -f "$BLOCKLIST_FILE" ]; then
+                echo -e "${RED}Error: Blocklist file not found: $BLOCKLIST_FILE${NC}"
+                exit 1
+            fi
+            shift 2
+            ;;
         --clear-cache)
             echo -e "${YELLOW}Clearing cache...${NC}"
             rm -rf "${HOME}/.cache/ocp-doc-scanner"
@@ -199,10 +221,11 @@ if [ -z "$1" ]; then
     echo "  --fix           Run ocp-doc-checker in fix mode and create PRs"
     echo "  --force         Non-interactive mode (auto-accept all prompts)"
     echo "  --link-to URL   Add tracking issue link to PRs"
+    echo "  --blocklist FILE Path to blocklist YAML file"
     echo "  --clear-cache   Clear the repository cache"
     echo "  --cache-info    Show cache information"
     echo ""
-    echo "Note: All options (--fix, --force, --link-to, etc.) must come BEFORE <org-name>"
+    echo "Note: All options (--fix, --force, --link-to, --blocklist, etc.) must come BEFORE <org-name>"
     exit 1
 fi
 
@@ -309,6 +332,72 @@ get_repo_dir() {
     local repo="$1"
     local repo_name=$(echo "$repo" | sed 's/\//__/g')
     echo "${CACHE_REPOS_DIR}/${repo_name}"
+}
+
+# Function to load blocklist from YAML file
+load_blocklist() {
+    local blocklist_file="$1"
+    local blocklist_repos=()
+    
+    if [ ! -f "$blocklist_file" ]; then
+        echo "${blocklist_repos[@]}"
+        return
+    fi
+    
+    # Simple YAML parsing - extract repos from blocklist section
+    # This handles both single-line and multi-line formats
+    local in_blocklist=false
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        
+        # Check if we're entering the blocklist section
+        if [[ "$line" =~ ^blocklist: ]]; then
+            in_blocklist=true
+            # Check for inline array format: blocklist: [repo1, repo2]
+            if [[ "$line" =~ \[(.*)\] ]]; then
+                local inline_repos="${BASH_REMATCH[1]}"
+                IFS=',' read -ra repos <<< "$inline_repos"
+                for repo in "${repos[@]}"; do
+                    repo=$(echo "$repo" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/"//g;s/'"'"'//g')
+                    [ -n "$repo" ] && blocklist_repos+=("$repo")
+                done
+                in_blocklist=false
+            fi
+            continue
+        fi
+        
+        # If we're in blocklist section, extract repo names
+        if [ "$in_blocklist" = true ]; then
+            # Look for list items: - repo-name or - "repo-name"
+            if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*(.+) ]]; then
+                local repo="${BASH_REMATCH[1]}"
+                # Remove quotes and trim whitespace
+                repo=$(echo "$repo" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/"//g;s/'"'"'//g')
+                [ -n "$repo" ] && blocklist_repos+=("$repo")
+            # Exit blocklist section if we hit a new top-level key
+            elif [[ "$line" =~ ^[a-zA-Z] ]]; then
+                in_blocklist=false
+            fi
+        fi
+    done < "$blocklist_file"
+    
+    echo "${blocklist_repos[@]}"
+}
+
+# Function to check if a repo is in the blocklist
+is_blocklisted() {
+    local repo="$1"
+    shift
+    local blocklist=("$@")
+    
+    for blocked in "${blocklist[@]}"; do
+        if [ "$repo" = "$blocked" ]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Function to prompt user for confirmation
@@ -635,6 +724,26 @@ Repository: https://github.com/sebrandon1/ocp-doc-checker"
     cd - > /dev/null
 }
 
+# Find and load blocklist
+if [ -z "$BLOCKLIST_FILE" ]; then
+    # Look for blocklist in default locations
+    if [ -f "${HOME}/.config/ocp-doc-scanner/blocklist.yaml" ]; then
+        BLOCKLIST_FILE="${HOME}/.config/ocp-doc-scanner/blocklist.yaml"
+    elif [ -f "$(dirname "$0")/blocklist.yaml" ]; then
+        BLOCKLIST_FILE="$(dirname "$0")/blocklist.yaml"
+    fi
+fi
+
+# Load blocklist repos into array
+BLOCKLISTED_REPOS=()
+if [ -n "$BLOCKLIST_FILE" ] && [ -f "$BLOCKLIST_FILE" ]; then
+    echo -e "${YELLOW}Loading blocklist from: ${BLOCKLIST_FILE}${NC}"
+    read -ra BLOCKLISTED_REPOS <<< "$(load_blocklist "$BLOCKLIST_FILE")"
+    if [ ${#BLOCKLISTED_REPOS[@]} -gt 0 ]; then
+        echo -e "${YELLOW}Found ${#BLOCKLISTED_REPOS[@]} blocklisted repository(ies)${NC}"
+    fi
+fi
+
 # Start timer
 SCRIPT_START_TIME=$(date +%s)
 
@@ -644,6 +753,9 @@ echo -e "${BLUE}========================================${NC}"
 echo -e "Organization: ${GREEN}${ORG_NAME}${NC}"
 echo -e "Output file: ${GREEN}${OUTPUT_FILE}${NC}"
 echo -e "Cache directory: ${CACHE_DIR}"
+if [ ${#BLOCKLISTED_REPOS[@]} -gt 0 ]; then
+    echo -e "Blocklist: ${YELLOW}${#BLOCKLISTED_REPOS[@]} repos${NC}"
+fi
 echo -e "Started: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
 
@@ -678,6 +790,7 @@ repos_using_checker=()
 repos_with_checker_prs=()
 repos_not_using_checker=()
 repos_with_prs_created=()
+repos_skipped=()
 total_files_found=0
 cache_hits=0
 cache_misses=0
@@ -696,10 +809,23 @@ while IFS= read -r repo; do
     
     echo -e "${BLUE}[$current_repo/$TOTAL_REPO_COUNT]${NC} Scanning ${YELLOW}$repo${NC}..."
     
+    # Check if repo is in blocklist
+    if is_blocklisted "$repo" "${BLOCKLISTED_REPOS[@]}"; then
+        echo -e "    ${YELLOW}⊘ Skipping (blocklisted)${NC}"
+        repos_skipped+=("$repo")
+        continue
+    fi
+    
     # Get the default branch and latest commit
     repo_info=$(gh repo view "$repo" --json defaultBranchRef 2>/dev/null)
     default_branch=$(echo "$repo_info" | jq -r '.defaultBranchRef.name' 2>/dev/null || echo "main")
-    latest_commit=$(echo "$repo_info" | jq -r '.defaultBranchRef.target.oid' 2>/dev/null || echo "")
+    
+    # Get the latest commit hash using the API (gh repo view doesn't return commit data)
+    if [ -n "$default_branch" ]; then
+        latest_commit=$(gh api "repos/$repo/commits/$default_branch" --jq '.sha' 2>/dev/null || echo "")
+    else
+        latest_commit=""
+    fi
     
     # Check if we have this repo cached with the same commit
     cached_commit=$(get_cached_commit "$repo")
@@ -877,6 +1003,7 @@ total_repos_with_docs=${#repos_with_docs[@]}
 total_using_checker=${#repos_using_checker[@]}
 total_with_prs=${#repos_with_checker_prs[@]}
 total_not_using=${#repos_not_using_checker[@]}
+total_skipped=${#repos_skipped[@]}
 
 # Write summary to output file
 cat >> "$OUTPUT_FILE" << EOF
@@ -884,7 +1011,9 @@ cat >> "$OUTPUT_FILE" << EOF
 ================================================================================
 SUMMARY
 ================================================================================
-Total repositories scanned: ${TOTAL_REPO_COUNT}
+Total repositories in org: ${TOTAL_REPO_COUNT}
+Total repositories skipped (blocklisted): ${total_skipped}
+Total repositories scanned: $((TOTAL_REPO_COUNT - total_skipped))
 Total repositories with OCP documentation links: ${total_repos_with_docs}
 Total files with OCP documentation links: ${total_files_found}
 
@@ -961,6 +1090,15 @@ if [ $total_not_using -gt 0 ]; then
     echo "" >> "$OUTPUT_FILE"
 fi
 
+if [ $total_skipped -gt 0 ]; then
+    echo "Repositories skipped (blocklisted):" >> "$OUTPUT_FILE"
+    for repo in "${repos_skipped[@]}"; do
+        echo "  - $repo" >> "$OUTPUT_FILE"
+        echo "    https://github.com/$repo" >> "$OUTPUT_FILE"
+    done
+    echo "" >> "$OUTPUT_FILE"
+fi
+
 # Calculate cache hit rate
 cache_hit_rate=$(awk "BEGIN {printf \"%.1f\", ($cache_hits / $TOTAL_REPO_COUNT) * 100}")
 
@@ -969,7 +1107,11 @@ echo ""
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Scan Complete!${NC}"
 echo -e "${BLUE}========================================${NC}"
-echo -e "Total repositories scanned: ${GREEN}${TOTAL_REPO_COUNT}${NC}"
+echo -e "Total repositories in org: ${GREEN}${TOTAL_REPO_COUNT}${NC}"
+if [ ${total_skipped} -gt 0 ]; then
+    echo -e "Repositories skipped (blocklisted): ${YELLOW}${total_skipped}${NC}"
+fi
+echo -e "Repositories scanned: ${GREEN}$((TOTAL_REPO_COUNT - total_skipped))${NC}"
 echo -e "Repositories with OCP docs: ${GREEN}${total_repos_with_docs}${NC}"
 echo -e "Total files found: ${GREEN}${total_files_found}${NC}"
 echo ""
@@ -1030,6 +1172,14 @@ if [ $total_not_using -gt 0 ]; then
     done
 else
     echo -e "${GREEN}✓ All repositories with OCP docs are using ocp-doc-checker!${NC}"
+fi
+
+if [ $total_skipped -gt 0 ]; then
+    echo ""
+    echo -e "${YELLOW}⊘ Skipped repositories (blocklisted):${NC}"
+    for repo in "${repos_skipped[@]}"; do
+        echo -e "  ${YELLOW}•${NC} $repo"
+    done
 fi
 
 exit 0

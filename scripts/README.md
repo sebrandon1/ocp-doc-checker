@@ -24,6 +24,7 @@ This directory contains utility scripts for testing, validating, and automating 
 - Interactive prompts or `--force` mode for full automation
 - Smart duplicate detection - skips repos with existing open PRs
 - Links all PRs to a tracking issue with `--link-to`
+- Repository blocklist support to skip specific repos
 - Generates detailed reports with statistics
 
 **Usage:**
@@ -47,6 +48,12 @@ This directory contains utility scripts for testing, validating, and automating 
 # Full automation with tracking
 ./scripts/scan-org-for-ocp-docs.sh --fix --force --link-to https://github.com/owner/repo/issues/18 openshift
 
+# Scan with blocklist to skip specific repos
+./scripts/scan-org-for-ocp-docs.sh --blocklist ./blocklist.yaml openshift
+
+# Full automation with blocklist and tracking
+./scripts/scan-org-for-ocp-docs.sh --fix --force --blocklist ./blocklist.yaml --link-to https://github.com/owner/repo/issues/18 openshift
+
 # View cache information
 ./scripts/scan-org-for-ocp-docs.sh --cache-info
 
@@ -61,6 +68,7 @@ This directory contains utility scripts for testing, validating, and automating 
 - `--fix` - Run ocp-doc-checker in fix mode and create pull requests
 - `--force` - Non-interactive mode, automatically accepts all prompts (use with `--fix`)
 - `--link-to URL` - Add a tracking issue link to all created PRs
+- `--blocklist FILE` - Path to YAML file containing repositories to skip
 - `--cache-info` - Display cache information
 - `--clear-cache` - Clear the repository cache
 
@@ -81,6 +89,54 @@ This directory contains utility scripts for testing, validating, and automating 
 **Output Files:**
 - `<output-file>` - Detailed scan results and statistics
 - `<output-file>.prs` - List of created PR URLs (in fix mode)
+
+**Blocklist Configuration:**
+
+The script supports skipping specific repositories using a YAML blocklist file. This is useful for:
+- Archived repositories
+- Private or inaccessible repos
+- Repos with special handling requirements
+- Repos you don't want to scan or modify
+
+**Blocklist File Format:**
+
+```yaml
+blocklist:
+  - org/repo-name-1
+  - org/repo-name-2
+  - org/repo-name-3
+```
+
+**Blocklist File Locations (checked in order):**
+1. Path specified with `--blocklist` flag
+2. `~/.config/ocp-doc-scanner/blocklist.yaml` (user-level)
+3. `./scripts/blocklist.yaml` (project-level)
+
+**Example Blocklist File:**
+
+See `scripts/blocklist.example.yaml` for a complete example with comments.
+
+```yaml
+blocklist:
+  - openshift/archived-repo
+  - openshift-kni/test-repository
+  - redhat-openshift-ecosystem/private-repo  # Access issues
+```
+
+**Blocklist Usage:**
+
+```bash
+# Use default blocklist (if exists in default locations)
+./scripts/scan-org-for-ocp-docs.sh openshift
+
+# Use custom blocklist file
+./scripts/scan-org-for-ocp-docs.sh --blocklist /path/to/blocklist.yaml openshift
+
+# Use blocklist with fix mode
+./scripts/scan-org-for-ocp-docs.sh --fix --blocklist ./my-blocklist.yaml openshift
+```
+
+Blocklisted repositories will be completely skipped during scanning and will be listed in the final summary report.
 
 ---
 
