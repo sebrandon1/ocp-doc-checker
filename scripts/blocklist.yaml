@@ -1,0 +1,21 @@
+# OCP Doc Checker - Repository Blocklist
+#
+# List repositories (one per line) that should be skipped during org scanning.
+# Use the full repository name format: org/repo-name
+#
+# Example:
+#   blocklist:
+#     - openshift/some-archived-repo
+#     - openshift/repo-with-special-handling
+#
+# This file can be placed in:
+#   1. ~/.config/ocp-doc-scanner/blocklist.yaml (user-level)
+#   2. ./scripts/blocklist.yaml (project-level)
+#   3. Custom location via --blocklist flag
+
+blocklist:
+  # Add repositories to skip below (uncomment and modify examples as needed)
+  # - openshift/example-repo-to-skip
+  # - openshift/another-repo-to-skip
+  - openshift/lightspeed-rag-content
+

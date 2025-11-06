@@ -1,0 +1,24 @@
+# OCP Doc Checker - Repository Blocklist Example
+#
+# This is an example blocklist file showing different ways to specify repositories to skip.
+# Copy this file to blocklist.yaml and customize it for your needs.
+#
+# The script looks for blocklist files in these locations (in order):
+#   1. Path specified with --blocklist flag
+#   2. ~/.config/ocp-doc-scanner/blocklist.yaml (user-level)
+#   3. ./scripts/blocklist.yaml (project-level)
+
+blocklist:
+  # Format: org/repo-name (full repository name)
+  # Example repos to skip:
+  - openshift/example-archived-repo
+  - openshift/test-repository
+  - openshift-kni/special-handling-repo
+  
+  # You can add comments for each entry to explain why it's blocklisted:
+  - redhat-openshift-ecosystem/private-repo  # Access issues
+  - openshift/deprecated-project              # No longer maintained
+  
+  # The script will skip these repos entirely during scanning,
+  # saving time and avoiding errors for repos you don't want to process.
+
