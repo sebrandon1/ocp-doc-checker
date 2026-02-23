@@ -9,6 +9,8 @@ on:
     branches:
       - main
 
+permissions: read-all
+
 jobs:
   nightly-tests:
     name: Nightly Integration Tests with Real Docs

@@ -7,6 +7,8 @@ on:
       - main
   workflow_dispatch:
 
+permissions: read-all
+
 jobs:
   test-batch-single-file:
     name: Test Batch Mode - Single File

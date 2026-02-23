@@ -6,6 +6,8 @@ on:
     branches:
       - main
 
+permissions: read-all
+
 jobs:
   test-go:
     name: Run Go Tests

@@ -7,6 +7,8 @@ on:
       - add_fix
   workflow_dispatch:
 
+permissions: read-all
+
 jobs:
   test-fix-mode:
     name: Test Automatic URL Fixing
