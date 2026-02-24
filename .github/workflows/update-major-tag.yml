@@ -4,12 +4,13 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: write
+permissions: read-all
 
 jobs:
   update-major-tag:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

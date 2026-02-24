@@ -6,6 +6,8 @@ on:
     branches:
       - main
 
+permissions: read-all
+
 jobs:
   single-url-check:
     runs-on: ubuntu-latest
