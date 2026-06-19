@@ -20,7 +20,7 @@ jobs:
             docs.redhat.com
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check 4.17 Documentation (expect outdated)
         uses: ./
@@ -42,7 +42,7 @@ jobs:
     name: Batch Scan Example
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Scan documentation files for OCP URLs
         uses: ./
