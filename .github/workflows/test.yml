@@ -28,8 +28,18 @@ jobs:
         run: go build -o ocp-doc-checker .
 
   test-cli:
-    name: Test CLI Functionality
+    name: Test CLI - ${{ matrix.test.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - { name: 'Outdated URL', script: 'test-outdated-url.sh', continue: true }
+          - { name: 'Current URL', script: 'test-current-url.sh', continue: false }
+          - { name: 'URL Accessibility', script: 'test-url-accessibility.sh', continue: false }
+          - { name: 'Invalid URL', script: 'test-invalid-url.sh', continue: false }
+          - { name: 'URL Replacement', script: 'test-url-replacement.sh', continue: false }
+          - { name: 'Anchor Validation', script: 'test-anchor-validation.sh', continue: false }
     steps:
       - name: Check Red Hat Status
         uses: palmsoftware/redhat-status@v0
@@ -48,34 +58,9 @@ jobs:
       - name: Build tool
         run: go build -o ocp-doc-checker .
 
-      - name: Test 1 - Outdated URL should fail
-        id: test1
-        continue-on-error: true
-        run: ./scripts/test-outdated-url.sh
-
-      - name: Test 2 - Current URL should pass
-        id: test2
-        run: ./scripts/test-current-url.sh
-
-      - name: Test 3 - Verify suggested URLs are accessible
-        id: test3
-        run: ./scripts/test-url-accessibility.sh
-
-      - name: Test 4 - Invalid URL should fail gracefully
-        id: test4
-        run: ./scripts/test-invalid-url.sh
-
-      - name: Test 5 - Specific version replacement
-        id: test5
-        run: ./scripts/test-url-replacement.sh
-
-      - name: Test 6 - Anchor validation with real docs
-        id: test6
-        run: ./scripts/test-anchor-validation.sh
-
-      - name: Test Summary
-        if: always()
-        run: ./scripts/generate-cli-test-summary.sh "${{ steps.test1.outcome }}" "${{ steps.test2.outcome }}" "${{ steps.test3.outcome }}" "${{ steps.test4.outcome }}" "${{ steps.test5.outcome }}" "${{ steps.test6.outcome }}"
+      - name: Run test - ${{ matrix.test.name }}
+        continue-on-error: ${{ matrix.test.continue }}
+        run: ./scripts/${{ matrix.test.script }}
 
   test-action:
     name: Test GitHub Action
