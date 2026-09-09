@@ -1,6 +1,6 @@
 # Multi-stage build for ocp-doc-checker
 # Stage 1: Build the Go binary
-FROM golang:1.25-alpine AS builder
+FROM golang:1.27.1-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git make
