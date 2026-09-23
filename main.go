@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -134,24 +137,22 @@ func handleDirectory(c *checker.Checker, path string) {
 	}
 
 	// Check all URLs
-	var results []*checker.CheckResult
-	hasOutdated := false
-	urlToLocation := make(map[string]URLLocation)
-
-	for i, loc := range urlLocations {
-		if *verboseFlag {
+	urlToLocation := make(map[string]URLLocation, len(urlLocations))
+	for _, loc := range urlLocations {
+		urlToLocation[loc.URL] = loc
+	}
+	results, checkErrors := checkURLLocations(c, urlLocations, func(i int, loc URLLocation) {
+		if !*verboseFlag {
+			return
+		}
+		if *jsonFlag {
+			fmt.Fprintf(os.Stderr, "[%d/%d] Checking: %s\n", i+1, len(urlLocations), loc.URL)
+		} else {
 			fmt.Printf("[%d/%d] Checking: %s\n", i+1, len(urlLocations), loc.URL)
 		}
-
-		urlToLocation[loc.URL] = loc
-
-		result, err := c.Check(loc.URL)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking URL %s: %v\n", loc.URL, err)
-			continue
-		}
-
-		results = append(results, result)
+	})
+	hasOutdated := false
+	for _, result := range results {
 		if result.IsOutdated {
 			hasOutdated = true
 		}
@@ -164,15 +165,35 @@ func handleDirectory(c *checker.Checker, path string) {
 
 	// Output results
 	if *jsonFlag {
-		printBatchJSONResults(results)
+		printBatchJSONResults(results, checkErrors)
 	} else {
-		printBatchTextResults(results, *verboseFlag)
+		printBatchTextResults(results, checkErrors, *verboseFlag)
 	}
 
 	// Exit with appropriate code
+	if len(checkErrors) > 0 {
+		os.Exit(1)
+	}
 	if hasOutdated && !*fixFlag {
 		os.Exit(1)
 	}
+}
+
+func checkURLLocations(c *checker.Checker, locations []URLLocation, beforeCheck func(int, URLLocation)) ([]*checker.CheckResult, []batchCheckError) {
+	var results []*checker.CheckResult
+	var checkErrors []batchCheckError
+	for i, loc := range locations {
+		if beforeCheck != nil {
+			beforeCheck(i, loc)
+		}
+		result, err := c.Check(loc.URL)
+		if err != nil {
+			checkErrors = append(checkErrors, sanitizeBatchCheckError(loc.URL, err))
+			continue
+		}
+		results = append(results, result)
+	}
+	return results, checkErrors
 }
 
 // scanDirectoryWithLocations recursively scans a directory and tracks URL locations
@@ -456,7 +477,7 @@ func printJSONResults(result *checker.CheckResult) {
 	fmt.Println(`}`)
 }
 
-func printBatchTextResults(results []*checker.CheckResult, verbose bool) {
+func printBatchTextResults(results []*checker.CheckResult, checkErrors []batchCheckError, verbose bool) {
 	uptodateCount := 0
 	outdatedCount := 0
 
@@ -497,8 +518,15 @@ func printBatchTextResults(results []*checker.CheckResult, verbose bool) {
 	}
 
 	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("Summary: %d total, %d up-to-date, %d outdated\n", len(results), uptodateCount, outdatedCount)
+	fmt.Printf("Summary: %d successful checks, %d up-to-date, %d outdated, %d errors\n", len(results), uptodateCount, outdatedCount, len(checkErrors))
 	fmt.Println(strings.Repeat("=", 80))
+	if len(checkErrors) > 0 {
+		fmt.Println()
+		fmt.Println("❌ Failed URL Checks:")
+		for _, checkError := range checkErrors {
+			fmt.Printf("- %s: %s\n", checkError.URL, checkError.Message)
+		}
+	}
 
 	// Print recommendations for outdated URLs
 	if outdatedCount > 0 {
@@ -517,7 +545,17 @@ func printBatchTextResults(results []*checker.CheckResult, verbose bool) {
 	}
 }
 
-func printBatchJSONResults(results []*checker.CheckResult) {
+func printBatchJSONResults(results []*checker.CheckResult, checkErrors []batchCheckError) {
+	if err := encodeBatchCheckResults(os.Stdout, results, checkErrors); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding JSON output: %v\n", err)
+	}
+}
+
+func encodeBatchCheckResults(w io.Writer, results []*checker.CheckResult, checkErrors []batchCheckError) error {
+	return json.NewEncoder(w).Encode(makeBatchCheckJSONOutput(results, checkErrors))
+}
+
+func makeBatchCheckJSONOutput(results []*checker.CheckResult, checkErrors []batchCheckError) batchCheckJSONOutput {
 	uptodateCount := 0
 	outdatedCount := 0
 
@@ -529,41 +567,82 @@ func printBatchJSONResults(results []*checker.CheckResult) {
 		}
 	}
 
-	fmt.Printf(`{
-  "total_count": %d,
-  "uptodate_count": %d,
-  "outdated_count": %d,
-  "results": [
-`, len(results), uptodateCount, outdatedCount)
+	batch := batchCheckJSONOutput{
+		TotalCount:    len(results),
+		UptodateCount: uptodateCount,
+		OutdatedCount: outdatedCount,
+		ErrorCount:    len(checkErrors),
+		Errors:        append([]batchCheckError{}, checkErrors...),
+		Results:       make([]batchCheckJSONItem, 0, len(results)),
+	}
+	for _, result := range results {
+		batch.Results = append(batch.Results, batchCheckJSONItem{
+			OriginalURL:     result.OriginalURL,
+			OriginalVersion: result.OriginalVersion,
+			LatestVersion:   result.LatestVersion,
+			IsOutdated:      result.IsOutdated,
+			NewerVersions:   toBatchCheckVersionJSON(result.NewerVersions),
+		})
+	}
+	return batch
+}
 
-	for i, result := range results {
-		comma := ","
-		if i == len(results)-1 {
-			comma = ""
+type batchCheckError struct {
+	URL     string `json:"url"`
+	Message string `json:"message"`
+}
+
+type batchCheckJSONOutput struct {
+	TotalCount    int                  `json:"total_count"`
+	UptodateCount int                  `json:"uptodate_count"`
+	OutdatedCount int                  `json:"outdated_count"`
+	Results       []batchCheckJSONItem `json:"results"`
+	ErrorCount    int                  `json:"error_count"`
+	Errors        []batchCheckError    `json:"errors"`
+}
+
+type batchCheckJSONItem struct {
+	OriginalURL     string                  `json:"original_url"`
+	OriginalVersion string                  `json:"original_version"`
+	LatestVersion   string                  `json:"latest_version"`
+	IsOutdated      bool                    `json:"is_outdated"`
+	NewerVersions   []batchCheckVersionJSON `json:"newer_versions"`
+}
+
+type batchCheckVersionJSON struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
+}
+
+var batchErrorURLPattern = regexp.MustCompile(`https?://[^[:space:]"'<>]+`)
+
+func sanitizeBatchCheckError(rawURL string, err error) batchCheckError {
+	parsedURL, parseErr := url.Parse(rawURL)
+	var safeURL string
+	if parseErr != nil {
+		safeURL = "[redacted URL]"
+	} else {
+		if parsedURL.User != nil {
+			parsedURL.User = url.User("REDACTED")
 		}
-
-		fmt.Printf(`    {
-      "original_url": "%s",
-      "original_version": "%s",
-      "latest_version": "%s",
-      "is_outdated": %t,
-      "newer_versions": [`, result.OriginalURL, result.OriginalVersion, result.LatestVersion, result.IsOutdated)
-
-		for j, v := range result.NewerVersions {
-			versionComma := ","
-			if j == len(result.NewerVersions)-1 {
-				versionComma = ""
-			}
-			fmt.Printf(`
-        {"version": "%s", "url": "%s"}%s`, v.Version, v.URL, versionComma)
+		if parsedURL.RawQuery != "" {
+			parsedURL.RawQuery = "REDACTED"
 		}
-
-		fmt.Printf(`
-      ]
-    }%s
-`, comma)
+		if parsedURL.Fragment != "" {
+			parsedURL.Fragment = "REDACTED"
+		}
+		safeURL = parsedURL.String()
 	}
 
-	fmt.Println(`  ]`)
-	fmt.Println(`}`)
+	message := strings.ReplaceAll(err.Error(), rawURL, "[redacted URL]")
+	message = batchErrorURLPattern.ReplaceAllString(message, "[redacted URL]")
+	return batchCheckError{URL: safeURL, Message: message}
+}
+
+func toBatchCheckVersionJSON(results []checker.VersionCheckResult) []batchCheckVersionJSON {
+	versions := make([]batchCheckVersionJSON, 0, len(results))
+	for _, result := range results {
+		versions = append(versions, batchCheckVersionJSON{Version: result.Version, URL: result.URL})
+	}
+	return versions
 }

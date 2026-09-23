@@ -43,6 +43,10 @@ outputs:
     description: 'Number of up-to-date URLs found (batch mode only)'
   total-count:
     description: 'Total number of URLs checked (batch mode only)'
+  error-count:
+    description: 'Number of URLs that could not be checked (batch mode only)'
+  errors:
+    description: 'JSON array of failed URLs and sanitized error messages (batch mode only)'
 
 runs:
   using: 'composite'
@@ -95,6 +99,15 @@ runs:
         if [ -n "${{ inputs.url }}" ]; then
           OUTPUT=$(/tmp/ocp-doc-checker -url "${{ inputs.url }}" $FLAGS -json)
           EXIT_CODE=$?
+
+          if ! printf '%s' "$OUTPUT" | jq -e '(.is_outdated | type == "boolean") and (.original_version | type == "string")' > /dev/null 2>&1; then
+            SAFE_URL=$(printf '%s' "${{ inputs.url }}" | sed -E 's#(https?://)[^/@]+@#\1[redacted]@#; s/\?.*$//')
+            ERRORS=$(jq -cn --arg url "$SAFE_URL" --arg message "URL check failed (exit code $EXIT_CODE)" '[{url: $url, message: $message}]')
+            echo "error-count=1" >> $GITHUB_OUTPUT
+            echo "errors=$ERRORS" >> $GITHUB_OUTPUT
+            echo "::error::Unable to check the documentation URL"
+            exit 1
+          fi
           
           echo "$OUTPUT"
           
@@ -185,6 +198,8 @@ runs:
           echo "outdated-count=0" >> $GITHUB_OUTPUT
           echo "uptodate-count=0" >> $GITHUB_OUTPUT
           echo "total-count=0" >> $GITHUB_OUTPUT
+          echo "error-count=0" >> $GITHUB_OUTPUT
+          echo "errors=[]" >> $GITHUB_OUTPUT
           
           exit 0
         fi
@@ -220,6 +235,8 @@ runs:
         if [ -z "$URLS" ]; then
           echo "### ✅ No OCP Documentation URLs Found" >> $GITHUB_STEP_SUMMARY
           echo "No URLs to check in the specified paths." >> $GITHUB_STEP_SUMMARY
+          echo "error-count=0" >> $GITHUB_OUTPUT
+          echo "errors=[]" >> $GITHUB_OUTPUT
           exit 0
         fi
         
@@ -231,6 +248,8 @@ runs:
         # Check each URL
         OUTDATED_COUNT=0
         UPTODATE_COUNT=0
+        ERROR_COUNT=0
+        ERRORS='[]'
         OUTDATED_URLS=""
         
         echo "| Status | Current Version | Latest Version | URL |" >> $GITHUB_STEP_SUMMARY
@@ -244,29 +263,50 @@ runs:
           echo "Checking: $url"
           OUTPUT=$(/tmp/ocp-doc-checker -url "$url" -json 2>&1)
           CHECK_EXIT=$?
+
+          if ! printf '%s' "$OUTPUT" | jq -e '(.is_outdated | type == "boolean") and (.original_version | type == "string")' > /dev/null 2>&1; then
+            SAFE_URL=$(printf '%s' "$url" | sed -E 's#(https?://)[^/@]+@#\1[redacted]@#; s/\?.*$//')
+            ERROR_COUNT=$((ERROR_COUNT + 1))
+            ERRORS=$(jq -cn --argjson errors "$ERRORS" --arg url "$SAFE_URL" --arg message "URL check failed (exit code $CHECK_EXIT)" '$errors + [{url: $url, message: $message}]')
+            echo "| ❌ | - | - | [Check failed]($SAFE_URL) |" >> $GITHUB_STEP_SUMMARY
+            continue
+          fi
+
+          IS_OUTDATED=$(echo "$OUTPUT" | jq -r '.is_outdated')
+          if [ "$CHECK_EXIT" -ne 0 ] && [ "$IS_OUTDATED" != "true" ]; then
+            SAFE_URL=$(printf '%s' "$url" | sed -E 's#(https?://)[^/@]+@#\1[redacted]@#; s/\?.*$//')
+            ERROR_COUNT=$((ERROR_COUNT + 1))
+            ERRORS=$(jq -cn --argjson errors "$ERRORS" --arg url "$SAFE_URL" --arg message "URL check failed (exit code $CHECK_EXIT)" '$errors + [{url: $url, message: $message}]')
+            echo "| ❌ | - | - | [Check failed]($SAFE_URL) |" >> $GITHUB_STEP_SUMMARY
+            continue
+          fi
           
-          if [ $CHECK_EXIT -eq 0 ]; then
-            # Up to date
-            UPTODATE_COUNT=$((UPTODATE_COUNT + 1))
-            CURRENT_VERSION=$(echo "$OUTPUT" | jq -r '.original_version' 2>/dev/null || echo "?")
-            echo "| ✅ | $CURRENT_VERSION | $CURRENT_VERSION | [Link]($url) |" >> $GITHUB_STEP_SUMMARY
-          else
-            # Outdated or error
+          CURRENT_VERSION=$(echo "$OUTPUT" | jq -r '.original_version')
+          LATEST_VERSION=$(echo "$OUTPUT" | jq -r '.latest_version')
+          if [ "$IS_OUTDATED" = "true" ]; then
             OUTDATED_COUNT=$((OUTDATED_COUNT + 1))
-            CURRENT_VERSION=$(echo "$OUTPUT" | jq -r '.original_version' 2>/dev/null || echo "?")
-            LATEST_VERSION=$(echo "$OUTPUT" | jq -r '.latest_version' 2>/dev/null || echo "?")
-            LATEST_URL=$(echo "$OUTPUT" | jq -r '.newer_versions[-1].url' 2>/dev/null || echo "")
+            LATEST_URL=$(echo "$OUTPUT" | jq -r '.newer_versions[-1].url')
             
             echo "| ⚠️ | $CURRENT_VERSION | $LATEST_VERSION | [Link]($url) |" >> $GITHUB_STEP_SUMMARY
             
             if [ -n "$LATEST_URL" ]; then
               OUTDATED_URLS="${OUTDATED_URLS}${url}|${LATEST_URL}\n"
             fi
+          else
+            UPTODATE_COUNT=$((UPTODATE_COUNT + 1))
+            echo "| ✅ | $CURRENT_VERSION | $LATEST_VERSION | [Link]($url) |" >> $GITHUB_STEP_SUMMARY
           fi
         done <<< "$URLS"
         
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Summary:** $UPTODATE_COUNT up-to-date, $OUTDATED_COUNT outdated" >> $GITHUB_STEP_SUMMARY
+        echo "**Summary:** $UPTODATE_COUNT up-to-date, $OUTDATED_COUNT outdated, $ERROR_COUNT errors" >> $GITHUB_STEP_SUMMARY
+        if [ $ERROR_COUNT -gt 0 ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Failed URL Checks" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo "$ERRORS" | jq . >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
         
         # Add recommendations for outdated URLs
         if [ $OUTDATED_COUNT -gt 0 ]; then
@@ -291,6 +331,13 @@ runs:
         echo "outdated-count=$OUTDATED_COUNT" >> $GITHUB_OUTPUT
         echo "uptodate-count=$UPTODATE_COUNT" >> $GITHUB_OUTPUT
         echo "total-count=$URL_COUNT" >> $GITHUB_OUTPUT
+        echo "error-count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+        echo "errors=$ERRORS" >> $GITHUB_OUTPUT
+
+        if [ $ERROR_COUNT -gt 0 ]; then
+          echo "::error::Failed to check $ERROR_COUNT documentation URL(s)"
+          exit 1
+        fi
         
         # Fail if requested and any outdated
         if [ "${{ inputs.fail-on-outdated }}" = "true" ] && [ $OUTDATED_COUNT -gt 0 ]; then
@@ -299,4 +346,3 @@ runs:
         fi
         
         exit 0
-

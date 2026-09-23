@@ -107,7 +107,7 @@ podman run --rm -v $(pwd):/workspace:Z quay.io/bapalm/ocp-doc-checker:latest \
 ## Exit Codes
 
 - `0`: All URLs are up-to-date, or `-fix` was used successfully
-- `1`: Outdated URLs found (when not using `-fix`), or error occurred
+- `1`: Outdated URLs found (when not using `-fix`), a URL could not be checked, or another error occurred
 
 ## JSON Output Format
 
@@ -127,6 +127,34 @@ podman run --rm -v $(pwd):/workspace:Z quay.io/bapalm/ocp-doc-checker:latest \
     {
       "version": "4.19",
       "url": "https://docs.redhat.com/.../4.19/..."
+    }
+  ]
+}
+```
+
+### Batch scan
+
+Batch JSON keeps failed checks separate from successful results. `total_count`, `uptodate_count`, and `outdated_count` count successful checks; `error_count` and `errors` report URLs that could not be checked. A failed URL is not counted as up-to-date or outdated. The command exits with status `1` if any URL check fails.
+
+```json
+{
+  "total_count": 1,
+  "uptodate_count": 1,
+  "outdated_count": 0,
+  "results": [
+    {
+      "original_url": "https://docs.redhat.com/.../4.20/...",
+      "original_version": "4.20",
+      "latest_version": "4.20",
+      "is_outdated": false,
+      "newer_versions": []
+    }
+  ],
+  "error_count": 1,
+  "errors": [
+    {
+      "url": "https://docs.redhat.com/.../4.17/...",
+      "message": "network request failed"
     }
   ]
 }
