@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -435,25 +436,37 @@ func printTextResults(result *checker.CheckResult, verbose bool) {
 }
 
 func printJSONResults(result *checker.CheckResult) {
-	fmt.Printf(`{
-  "original_url": "%s",
-  "original_version": "%s",
-  "latest_version": "%s",
-  "is_outdated": %t,
-  "newer_versions": [
-`, result.OriginalURL, result.OriginalVersion, result.LatestVersion, result.IsOutdated)
+	if err := json.NewEncoder(os.Stdout).Encode(makeSingleJSONResult(result)); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding JSON output: %v\n", err)
+	}
+}
 
-	for i, v := range result.NewerVersions {
-		comma := ","
-		if i == len(result.NewerVersions)-1 {
-			comma = ""
-		}
-		fmt.Printf(`    {"version": "%s", "url": "%s"}%s
-`, v.Version, v.URL, comma)
+type jsonVersionResult struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
+}
+
+type singleJSONOutput struct {
+	OriginalURL     string              `json:"original_url"`
+	OriginalVersion string              `json:"original_version"`
+	LatestVersion   string              `json:"latest_version"`
+	IsOutdated      bool                `json:"is_outdated"`
+	NewerVersions   []jsonVersionResult `json:"newer_versions"`
+}
+
+func makeSingleJSONResult(result *checker.CheckResult) singleJSONOutput {
+	newerVersions := make([]jsonVersionResult, 0, len(result.NewerVersions))
+	for _, version := range result.NewerVersions {
+		newerVersions = append(newerVersions, jsonVersionResult{Version: version.Version, URL: version.URL})
 	}
 
-	fmt.Println(`  ]`)
-	fmt.Println(`}`)
+	return singleJSONOutput{
+		OriginalURL:     result.OriginalURL,
+		OriginalVersion: result.OriginalVersion,
+		LatestVersion:   result.LatestVersion,
+		IsOutdated:      result.IsOutdated,
+		NewerVersions:   newerVersions,
+	}
 }
 
 func printBatchTextResults(results []*checker.CheckResult, verbose bool) {
@@ -518,6 +531,13 @@ func printBatchTextResults(results []*checker.CheckResult, verbose bool) {
 }
 
 func printBatchJSONResults(results []*checker.CheckResult) {
+	batch := makeBatchJSONResult(results)
+	if err := json.NewEncoder(os.Stdout).Encode(batch); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding JSON output: %v\n", err)
+	}
+}
+
+func makeBatchJSONResult(results []*checker.CheckResult) batchJSONResult {
 	uptodateCount := 0
 	outdatedCount := 0
 
@@ -529,41 +549,21 @@ func printBatchJSONResults(results []*checker.CheckResult) {
 		}
 	}
 
-	fmt.Printf(`{
-  "total_count": %d,
-  "uptodate_count": %d,
-  "outdated_count": %d,
-  "results": [
-`, len(results), uptodateCount, outdatedCount)
-
-	for i, result := range results {
-		comma := ","
-		if i == len(results)-1 {
-			comma = ""
-		}
-
-		fmt.Printf(`    {
-      "original_url": "%s",
-      "original_version": "%s",
-      "latest_version": "%s",
-      "is_outdated": %t,
-      "newer_versions": [`, result.OriginalURL, result.OriginalVersion, result.LatestVersion, result.IsOutdated)
-
-		for j, v := range result.NewerVersions {
-			versionComma := ","
-			if j == len(result.NewerVersions)-1 {
-				versionComma = ""
-			}
-			fmt.Printf(`
-        {"version": "%s", "url": "%s"}%s`, v.Version, v.URL, versionComma)
-		}
-
-		fmt.Printf(`
-      ]
-    }%s
-`, comma)
+	batch := batchJSONResult{
+		TotalCount:    len(results),
+		UptodateCount: uptodateCount,
+		OutdatedCount: outdatedCount,
+		Results:       make([]singleJSONOutput, 0, len(results)),
 	}
+	for _, result := range results {
+		batch.Results = append(batch.Results, makeSingleJSONResult(result))
+	}
+	return batch
+}
 
-	fmt.Println(`  ]`)
-	fmt.Println(`}`)
+type batchJSONResult struct {
+	TotalCount    int                `json:"total_count"`
+	UptodateCount int                `json:"uptodate_count"`
+	OutdatedCount int                `json:"outdated_count"`
+	Results       []singleJSONOutput `json:"results"`
 }
