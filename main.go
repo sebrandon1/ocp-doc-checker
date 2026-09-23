@@ -456,25 +456,41 @@ func printTextResults(result *checker.CheckResult, verbose bool) {
 }
 
 func printJSONResults(result *checker.CheckResult) {
-	fmt.Printf(`{
-  "original_url": "%s",
-  "original_version": "%s",
-  "latest_version": "%s",
-  "is_outdated": %t,
-  "newer_versions": [
-`, result.OriginalURL, result.OriginalVersion, result.LatestVersion, result.IsOutdated)
+	if err := encodeSingleJSONResult(os.Stdout, result); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding JSON output: %v\n", err)
+	}
+}
 
-	for i, v := range result.NewerVersions {
-		comma := ","
-		if i == len(result.NewerVersions)-1 {
-			comma = ""
-		}
-		fmt.Printf(`    {"version": "%s", "url": "%s"}%s
-`, v.Version, v.URL, comma)
+func encodeSingleJSONResult(w io.Writer, result *checker.CheckResult) error {
+	return json.NewEncoder(w).Encode(makeSingleJSONResult(result))
+}
+
+type jsonVersionResult struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
+}
+
+type singleJSONOutput struct {
+	OriginalURL     string              `json:"original_url"`
+	OriginalVersion string              `json:"original_version"`
+	LatestVersion   string              `json:"latest_version"`
+	IsOutdated      bool                `json:"is_outdated"`
+	NewerVersions   []jsonVersionResult `json:"newer_versions"`
+}
+
+func makeSingleJSONResult(result *checker.CheckResult) singleJSONOutput {
+	newerVersions := make([]jsonVersionResult, 0, len(result.NewerVersions))
+	for _, version := range result.NewerVersions {
+		newerVersions = append(newerVersions, jsonVersionResult{Version: version.Version, URL: version.URL})
 	}
 
-	fmt.Println(`  ]`)
-	fmt.Println(`}`)
+	return singleJSONOutput{
+		OriginalURL:     result.OriginalURL,
+		OriginalVersion: result.OriginalVersion,
+		LatestVersion:   result.LatestVersion,
+		IsOutdated:      result.IsOutdated,
+		NewerVersions:   newerVersions,
+	}
 }
 
 func printBatchTextResults(results []*checker.CheckResult, checkErrors []batchCheckError, verbose bool) {
@@ -588,18 +604,20 @@ func makeBatchCheckJSONOutput(results []*checker.CheckResult, checkErrors []batc
 		OutdatedCount: outdatedCount,
 		ErrorCount:    len(checkErrors),
 		Errors:        append([]batchCheckError{}, checkErrors...),
-		Results:       make([]batchCheckJSONItem, 0, len(results)),
+		Results:       make([]singleJSONOutput, 0, len(results)),
 	}
 	for _, result := range results {
-		batch.Results = append(batch.Results, batchCheckJSONItem{
-			OriginalURL:     result.OriginalURL,
-			OriginalVersion: result.OriginalVersion,
-			LatestVersion:   result.LatestVersion,
-			IsOutdated:      result.IsOutdated,
-			NewerVersions:   toBatchCheckVersionJSON(result.NewerVersions),
-		})
+		batch.Results = append(batch.Results, makeSingleJSONResult(result))
 	}
 	return batch
+}
+
+func encodeBatchJSONResult(w io.Writer, results []*checker.CheckResult) error {
+	return encodeBatchCheckResults(w, results, nil)
+}
+
+func makeBatchJSONResult(results []*checker.CheckResult) batchJSONResult {
+	return makeBatchCheckJSONOutput(results, nil)
 }
 
 type batchCheckError struct {
@@ -607,27 +625,16 @@ type batchCheckError struct {
 	Message string `json:"message"`
 }
 
-type batchCheckJSONOutput struct {
-	TotalCount    int                  `json:"total_count"`
-	UptodateCount int                  `json:"uptodate_count"`
-	OutdatedCount int                  `json:"outdated_count"`
-	Results       []batchCheckJSONItem `json:"results"`
-	ErrorCount    int                  `json:"error_count"`
-	Errors        []batchCheckError    `json:"errors"`
+type batchJSONResult struct {
+	TotalCount    int                `json:"total_count"`
+	UptodateCount int                `json:"uptodate_count"`
+	OutdatedCount int                `json:"outdated_count"`
+	Results       []singleJSONOutput `json:"results"`
+	ErrorCount    int                `json:"error_count"`
+	Errors        []batchCheckError  `json:"errors"`
 }
 
-type batchCheckJSONItem struct {
-	OriginalURL     string                  `json:"original_url"`
-	OriginalVersion string                  `json:"original_version"`
-	LatestVersion   string                  `json:"latest_version"`
-	IsOutdated      bool                    `json:"is_outdated"`
-	NewerVersions   []batchCheckVersionJSON `json:"newer_versions"`
-}
-
-type batchCheckVersionJSON struct {
-	Version string `json:"version"`
-	URL     string `json:"url"`
-}
+type batchCheckJSONOutput = batchJSONResult
 
 var batchErrorURLPattern = regexp.MustCompile(`https?://[^[:space:]"'<>]+`)
 
@@ -652,12 +659,4 @@ func sanitizeBatchCheckError(rawURL string, err error) batchCheckError {
 	message := strings.ReplaceAll(err.Error(), rawURL, "[redacted URL]")
 	message = batchErrorURLPattern.ReplaceAllString(message, "[redacted URL]")
 	return batchCheckError{URL: safeURL, Message: message}
-}
-
-func toBatchCheckVersionJSON(results []checker.VersionCheckResult) []batchCheckVersionJSON {
-	versions := make([]batchCheckVersionJSON, 0, len(results))
-	for _, result := range results {
-		versions = append(versions, batchCheckVersionJSON{Version: result.Version, URL: result.URL})
-	}
-	return versions
 }
