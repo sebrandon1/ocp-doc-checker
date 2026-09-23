@@ -478,71 +478,86 @@ func printJSONResults(result *checker.CheckResult) {
 }
 
 func printBatchTextResults(results []*checker.CheckResult, checkErrors []batchCheckError, verbose bool) {
+	if err := writeBatchTextResults(os.Stdout, results, checkErrors, verbose); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing text output: %v\n", err)
+	}
+}
+
+func writeBatchTextResults(w io.Writer, results []*checker.CheckResult, checkErrors []batchCheckError, verbose bool) error {
+	var writeErr error
+	write := func(format string, args ...any) {
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(w, format, args...)
+	}
+
 	uptodateCount := 0
 	outdatedCount := 0
 
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Println("📋 OCP Documentation URL Check Results")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Println()
+	write("%s\n", strings.Repeat("=", 80))
+	write("%s\n", "📋 OCP Documentation URL Check Results")
+	write("%s\n", strings.Repeat("=", 80))
+	write("\n")
 
 	for i, result := range results {
 		if result.IsOutdated {
 			outdatedCount++
-			fmt.Printf("[%d] ⚠️  OUTDATED\n", i+1)
+			write("[%d] ⚠️  OUTDATED\n", i+1)
 		} else {
 			uptodateCount++
-			fmt.Printf("[%d] ✅ UP TO DATE\n", i+1)
+			write("[%d] ✅ UP TO DATE\n", i+1)
 		}
 
-		fmt.Printf("    URL: %s\n", result.OriginalURL)
-		fmt.Printf("    Current Version: %s\n", result.OriginalVersion)
-		fmt.Printf("    Latest Version: %s\n", result.LatestVersion)
+		write("    URL: %s\n", result.OriginalURL)
+		write("    Current Version: %s\n", result.OriginalVersion)
+		write("    Latest Version: %s\n", result.LatestVersion)
 
 		if result.IsOutdated && len(result.NewerVersions) > 0 {
 			if *allAvailableFlag {
-				fmt.Println("    Available newer versions:")
+				write("%s\n", "    Available newer versions:")
 				for _, v := range result.NewerVersions {
-					fmt.Printf("      - Version %s: %s\n", v.Version, v.URL)
+					write("      - Version %s: %s\n", v.Version, v.URL)
 				}
 			} else {
 				latest := result.NewerVersions[len(result.NewerVersions)-1]
-				fmt.Printf("    Latest available: %s (%s)\n", latest.Version, latest.URL)
+				write("    Latest available: %s (%s)\n", latest.Version, latest.URL)
 				if len(result.NewerVersions) > 1 {
-					fmt.Printf("    (%d newer versions available, use --all-available to see all)\n", len(result.NewerVersions))
+					write("    (%d newer versions available, use --all-available to see all)\n", len(result.NewerVersions))
 				}
 			}
 		}
 
-		fmt.Println()
+		write("\n")
 	}
 
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("Summary: %d successful checks, %d up-to-date, %d outdated, %d errors\n", len(results), uptodateCount, outdatedCount, len(checkErrors))
-	fmt.Println(strings.Repeat("=", 80))
+	write("%s\n", strings.Repeat("=", 80))
+	write("Summary: successful=%d, up-to-date=%d, outdated=%d, errors=%d\n", len(results), uptodateCount, outdatedCount, len(checkErrors))
+	write("%s\n", strings.Repeat("=", 80))
 	if len(checkErrors) > 0 {
-		fmt.Println()
-		fmt.Println("❌ Failed URL Checks:")
+		write("\n")
+		write("%s\n", "❌ Failed URL Checks:")
 		for _, checkError := range checkErrors {
-			fmt.Printf("- %s: %s\n", checkError.URL, checkError.Message)
+			write("- %s: %s\n", checkError.URL, checkError.Message)
 		}
 	}
 
 	// Print recommendations for outdated URLs
 	if outdatedCount > 0 {
-		fmt.Println()
-		fmt.Println("🔧 Recommended Updates:")
-		fmt.Println()
+		write("\n")
+		write("%s\n", "🔧 Recommended Updates:")
+		write("\n")
 		for _, result := range results {
 			if result.IsOutdated && len(result.NewerVersions) > 0 {
 				latest := result.NewerVersions[len(result.NewerVersions)-1]
-				fmt.Printf("- Update from %s to %s:\n", result.OriginalVersion, latest.Version)
-				fmt.Printf("  Old: %s\n", result.OriginalURL)
-				fmt.Printf("  New: %s\n", latest.URL)
-				fmt.Println()
+				write("- Update from %s to %s:\n", result.OriginalVersion, latest.Version)
+				write("  Old: %s\n", result.OriginalURL)
+				write("  New: %s\n", latest.URL)
+				write("\n")
 			}
 		}
 	}
+	return writeErr
 }
 
 func printBatchJSONResults(results []*checker.CheckResult, checkErrors []batchCheckError) {
