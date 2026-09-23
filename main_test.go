@@ -120,12 +120,12 @@ func TestBatchTextSummarizesOutdatedResultsWithoutErrors(t *testing.T) {
 	result := &checker.CheckResult{
 		OriginalURL:     "https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/test/index",
 		OriginalVersion: "4.17",
-		LatestVersion:   "4.18",
+		LatestVersion:   "4.19",
 		IsOutdated:      true,
-		NewerVersions: []checker.VersionCheckResult{{
-			Version: "4.18",
-			URL:     "https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html-single/test/index",
-		}},
+		NewerVersions: []checker.VersionCheckResult{
+			{Version: "4.18", URL: "https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html-single/test/index"},
+			{Version: "4.19", URL: "https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/test/index"},
+		},
 	}
 	var output bytes.Buffer
 	if err := writeBatchTextResults(&output, []*checker.CheckResult{result}, nil, false); err != nil {
@@ -134,10 +134,36 @@ func TestBatchTextSummarizesOutdatedResultsWithoutErrors(t *testing.T) {
 
 	for _, want := range []string{
 		"Summary: successful=1, up-to-date=0, outdated=1, errors=0",
+		"2 newer versions available",
 		"🔧 Recommended Updates:",
 		"Old: " + result.OriginalURL,
-		"New: " + result.NewerVersions[0].URL,
+		"New: " + result.NewerVersions[1].URL,
 	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("text output is missing %q:\n%s", want, output.String())
+		}
+	}
+}
+
+func TestBatchTextListsAllNewerVersionsWhenRequested(t *testing.T) {
+	previous := *allAvailableFlag
+	*allAvailableFlag = true
+	t.Cleanup(func() { *allAvailableFlag = previous })
+	result := &checker.CheckResult{
+		OriginalURL:     "https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/test/index",
+		OriginalVersion: "4.17",
+		LatestVersion:   "4.19",
+		IsOutdated:      true,
+		NewerVersions: []checker.VersionCheckResult{
+			{Version: "4.18", URL: "https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html-single/test/index"},
+			{Version: "4.19", URL: "https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/test/index"},
+		},
+	}
+	var output bytes.Buffer
+	if err := writeBatchTextResults(&output, []*checker.CheckResult{result}, nil, false); err != nil {
+		t.Fatalf("write batch text output: %v", err)
+	}
+	for _, want := range []string{"Available newer versions:", "Version 4.18", "Version 4.19"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("text output is missing %q:\n%s", want, output.String())
 		}
