@@ -248,8 +248,8 @@ These scripts test the core functionality of the ocp-doc-checker CLI tool.
 
 **Test Cases:**
 1. **Missing Anchor Detection (SR-IOV case):**
-   - URL: `https://docs.redhat.com/.../4.17/html-single/networking/index#installing-sr-iov-operator_installing-sriov-operator`
-   - Expected: Tool detects anchor missing in 4.18/4.19, doesn't suggest upgrade
+   - URL: `https://docs.redhat.com/.../4.17/html/networking_overview/index#installing-sr-iov-operator_installing-sriov-operator`
+   - Expected: Tool detects the legacy anchor is missing in 4.18, 4.19, and 4.20, and doesn't suggest an upgrade
    - This is the real bug that was found in PR reviews!
 
 2. **Valid Anchor in All Versions:**
@@ -564,4 +564,3 @@ When adding new scripts to this directory:
 ## License
 
 See the main [LICENSE](../LICENSE) file in the repository root.
-

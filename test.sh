@@ -217,26 +217,26 @@ test_anchor_validation() {
     echo "Testing anchor validation with real Red Hat documentation..."
     
     # Test the SR-IOV case where anchor is missing in newer versions
-    local url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/networking/index#installing-sr-iov-operator_installing-sriov-operator"
+    local url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html/networking_overview/index#installing-sr-iov-operator_installing-sriov-operator"
     
     set +e
     OUTPUT=$(./ocp-doc-checker -url "$url" -json 2>&1)
     EXIT_CODE=$?
     set -e
     
-    echo "Testing SR-IOV URL where anchor moved in newer versions..."
+    echo "Testing legacy SR-IOV URL where anchor moved in newer versions..."
     
     # Expected: is_outdated = false (no valid newer versions because anchor missing)
     IS_OUTDATED=$(echo "$OUTPUT" | jq -r '.is_outdated')
     if [ "$IS_OUTDATED" != "false" ]; then
-        echo "Expected is_outdated=false (anchor missing in 4.18/4.19), got $IS_OUTDATED"
+        echo "Expected is_outdated=false (anchor missing in 4.18, 4.19, and 4.20), got $IS_OUTDATED"
         return 1
     fi
     
     # Expected: newer_versions = 0 (anchor doesn't exist in newer versions)
     NEWER_COUNT=$(echo "$OUTPUT" | jq '.newer_versions | length')
     if [ "$NEWER_COUNT" != "0" ]; then
-        echo "Expected 0 newer versions (anchor missing), got $NEWER_COUNT"
+        echo "Expected 0 newer versions (legacy anchor missing), got $NEWER_COUNT"
         return 1
     fi
     
@@ -318,4 +318,3 @@ main() {
 }
 
 main
-

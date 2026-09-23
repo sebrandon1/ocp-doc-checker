@@ -22,16 +22,16 @@ if [ ! -f "./ocp-doc-checker" ]; then
     go build -o ocp-doc-checker .
 fi
 
-# Test 1: SR-IOV URL - anchor exists in 4.17 but NOT in 4.18/4.19
+# Test 1: Legacy SR-IOV anchor is missing from newer versions
 echo "=========================================="
 echo "Test 1: Missing Anchor Detection (SR-IOV)"
 echo "=========================================="
 echo ""
-echo "URL: https://docs.redhat.com/.../4.17/html-single/networking/index#installing-sr-iov-operator_installing-sriov-operator"
-echo "Expected: Tool should detect that anchor is missing in 4.18 and 4.19"
+echo "URL: https://docs.redhat.com/.../4.17/html/networking_overview/index#installing-sr-iov-operator_installing-sriov-operator"
+echo "Expected: Tool should detect that anchor is missing in 4.18, 4.19, and 4.20"
 echo ""
 
-URL="https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/networking/index#installing-sr-iov-operator_installing-sriov-operator"
+URL="https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html/networking_overview/index#installing-sr-iov-operator_installing-sriov-operator"
 
 set +e
 OUTPUT=$(./ocp-doc-checker -url "$URL" -json 2>&1)
@@ -55,13 +55,13 @@ echo ""
 # Expected: is_outdated should be FALSE because no newer versions have the anchor
 if [ "$IS_OUTDATED" != "false" ]; then
     echo -e "${RED}❌ FAIL${NC}: Expected is_outdated=false (no valid newer versions)"
-    echo "The anchor doesn't exist in 4.18/4.19, so tool should NOT suggest upgrade"
+    echo "The anchor doesn't exist in 4.18, 4.19, or 4.20, so tool should NOT suggest upgrade"
     exit 1
 fi
 
 # Expected: newer_versions should be 0 because anchor doesn't exist in newer versions
 if [ "$NEWER_COUNT" != "0" ]; then
-    echo -e "${RED}❌ FAIL${NC}: Expected 0 newer versions (anchor missing in 4.18/4.19)"
+    echo -e "${RED}❌ FAIL${NC}: Expected 0 newer versions (anchor missing in 4.18, 4.19, and 4.20)"
     echo "Got: $NEWER_COUNT newer versions"
     exit 1
 fi
@@ -205,4 +205,3 @@ echo "  ✓ Still suggests upgrades when anchors exist in newer versions"
 echo "  ✓ Works correctly for URLs without anchors"
 echo "  ✓ Prevents false positives from reorganized content"
 echo ""
-

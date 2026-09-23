@@ -27,7 +27,7 @@ jobs:
           
           ## Documentation Links
           
-          - [4.15 Networking](https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/networking/index)
+          - [4.15 Authentication](https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/authentication_and_authorization/index)
           - [4.16 Storage](https://docs.redhat.com/en/documentation/openshift_container_platform/4.16/html-single/storage/index)
           - [4.17 Disconnected Environments](https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index#mirroring-image-set-full)
           
@@ -116,15 +116,15 @@ jobs:
             exit 1
           fi
           
-          # Check if file contains updated URLs with 4.19
-          if ! grep -q "openshift_container_platform/4\.19/" test-fix-output/test-doc.md; then
-            echo "❌ ERROR: No updated 4.19 URLs found"
+          # Check if file contains updated URLs with 4.20
+          if ! grep -q "openshift_container_platform/4\.20/" test-fix-output/test-doc.md; then
+            echo "❌ ERROR: No updated 4.20 URLs found"
             exit 1
           fi
-          
+
           echo "✅ All outdated URLs successfully updated!"
           echo "✅ No old version numbers (4.15, 4.16, 4.17) remain in URLs"
-          echo "✅ File contains updated 4.19 documentation URLs"
+          echo "✅ File contains updated 4.20 documentation URLs"
 
   test-fix-mode-multiple-files:
     name: Test Fix Mode - Multiple Files
@@ -139,7 +139,7 @@ jobs:
           
           cat > test-fix-multi/doc1.md << 'EOF'
           # Document 1
-          Links: https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/networking/index
+          Links: https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/authentication_and_authorization/index
           EOF
           
           cat > test-fix-multi/doc2.md << 'EOF'
@@ -201,8 +201,8 @@ jobs:
           fi
           
           # Verify updated URLs are present
-          if ! grep -r "openshift_container_platform/4\.19/" test-fix-multi/; then
-            echo "❌ ERROR: No updated 4.19 URLs found"
+          if ! grep -r "openshift_container_platform/4\.20/" test-fix-multi/; then
+            echo "❌ ERROR: No updated 4.20 URLs found"
             exit 1
           fi
           
@@ -219,7 +219,7 @@ jobs:
         run: |
           cat > test-default.md << 'EOF'
           # Test Default Path Behavior
-          Link: https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/networking/index
+          Link: https://docs.redhat.com/en/documentation/openshift_container_platform/4.15/html-single/authentication_and_authorization/index
           EOF
           cat test-default.md
 
@@ -234,8 +234,8 @@ jobs:
           cat test-default.md
           
           # Verify the URL was updated
-          if grep -q "openshift_container_platform/4\.19/" test-default.md; then
-            echo "✅ File was updated to 4.19!"
+          if grep -q "openshift_container_platform/4\.20/" test-default.md; then
+            echo "✅ File was updated to 4.20!"
           else
             echo "❌ ERROR: File was not updated"
             exit 1
@@ -254,7 +254,7 @@ jobs:
           cat > test-fix-current/current.md << 'EOF'
           # Already Up-to-date
           This file has current documentation links.
-          Link: https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html-single/networking/index
+          Link: https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/authentication_and_authorization/index
           EOF
 
       - name: Run fix mode on up-to-date file
@@ -269,12 +269,11 @@ jobs:
           echo "File content after fix mode:"
           cat test-fix-current/current.md
           
-          # Verify 4.19 is still there in the URL path (wasn't changed unnecessarily)
-          if ! grep -q "openshift_container_platform/4\.19/" test-fix-current/current.md; then
+          # Verify 4.20 is still there in the URL path (wasn't changed unnecessarily)
+          if ! grep -q "openshift_container_platform/4\.20/" test-fix-current/current.md; then
             echo "❌ ERROR: Current URLs were incorrectly modified or removed"
             exit 1
           fi
           
           echo "✅ Correctly left up-to-date URLs unchanged!"
-
 
