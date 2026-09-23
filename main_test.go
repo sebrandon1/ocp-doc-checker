@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -20,10 +21,11 @@ func TestSingleJSONResultEscapesValuesAndPreservesFields(t *testing.T) {
 		}},
 	}
 
-	encoded, err := json.Marshal(makeSingleJSONResult(result))
-	if err != nil {
-		t.Fatalf("marshal single result: %v", err)
+	var output bytes.Buffer
+	if err := encodeSingleJSONResult(&output, result); err != nil {
+		t.Fatalf("encode single result: %v", err)
 	}
+	encoded := output.Bytes()
 	if !json.Valid(encoded) {
 		t.Fatalf("single result is invalid JSON: %s", encoded)
 	}
@@ -43,10 +45,11 @@ func TestBatchJSONResultPreservesShapeAndCounts(t *testing.T) {
 		{OriginalURL: "https://example.com/two\\path", OriginalVersion: "4.17", LatestVersion: "4.19", IsOutdated: true},
 	}
 
-	encoded, err := json.Marshal(makeBatchJSONResult(results))
-	if err != nil {
-		t.Fatalf("marshal batch result: %v", err)
+	var output bytes.Buffer
+	if err := encodeBatchJSONResult(&output, results); err != nil {
+		t.Fatalf("encode batch result: %v", err)
 	}
+	encoded := output.Bytes()
 	if !json.Valid(encoded) {
 		t.Fatalf("batch result is invalid JSON: %s", encoded)
 	}
@@ -64,13 +67,13 @@ func TestBatchJSONResultPreservesShapeAndCounts(t *testing.T) {
 }
 
 func TestBatchJSONResultUsesEmptyArrayForNoResults(t *testing.T) {
-	encoded, err := json.Marshal(makeBatchJSONResult(nil))
-	if err != nil {
-		t.Fatalf("marshal empty batch result: %v", err)
+	var output bytes.Buffer
+	if err := encodeBatchJSONResult(&output, nil); err != nil {
+		t.Fatalf("encode empty batch result: %v", err)
 	}
 
 	var decoded map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
 		t.Fatalf("unmarshal empty batch result: %v", err)
 	}
 	if got := string(decoded["results"]); got != "[]" {

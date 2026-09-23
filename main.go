@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -436,9 +437,13 @@ func printTextResults(result *checker.CheckResult, verbose bool) {
 }
 
 func printJSONResults(result *checker.CheckResult) {
-	if err := json.NewEncoder(os.Stdout).Encode(makeSingleJSONResult(result)); err != nil {
+	if err := encodeSingleJSONResult(os.Stdout, result); err != nil {
 		fmt.Fprintf(os.Stderr, "Error encoding JSON output: %v\n", err)
 	}
+}
+
+func encodeSingleJSONResult(w io.Writer, result *checker.CheckResult) error {
+	return json.NewEncoder(w).Encode(makeSingleJSONResult(result))
 }
 
 type jsonVersionResult struct {
@@ -531,10 +536,13 @@ func printBatchTextResults(results []*checker.CheckResult, verbose bool) {
 }
 
 func printBatchJSONResults(results []*checker.CheckResult) {
-	batch := makeBatchJSONResult(results)
-	if err := json.NewEncoder(os.Stdout).Encode(batch); err != nil {
+	if err := encodeBatchJSONResult(os.Stdout, results); err != nil {
 		fmt.Fprintf(os.Stderr, "Error encoding JSON output: %v\n", err)
 	}
+}
+
+func encodeBatchJSONResult(w io.Writer, results []*checker.CheckResult) error {
+	return json.NewEncoder(w).Encode(makeBatchJSONResult(results))
 }
 
 func makeBatchJSONResult(results []*checker.CheckResult) batchJSONResult {
