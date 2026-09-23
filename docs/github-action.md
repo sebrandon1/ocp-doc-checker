@@ -106,6 +106,10 @@ If you don't specify `paths`, the action defaults to scanning the current direct
 | `outdated-count` | Number of outdated URLs found |
 | `uptodate-count` | Number of up-to-date URLs found |
 | `total-count` | Total number of URLs checked |
+| `error-count` | Number of URLs that could not be checked |
+| `errors` | JSON array of failed URLs and sanitized error messages |
+
+Failed URL checks are reported separately from outdated URLs. They are not included in `outdated-count` or `uptodate-count`, and the action fails when a URL cannot be checked so a network or parsing failure cannot produce a false green result. Error URLs have credentials and query strings redacted.
 
 ## Using Outputs
 
