@@ -38,15 +38,15 @@ outputs:
   newer-versions:
     description: 'JSON array of newer versions where the documentation exists (single URL mode only)'
   outdated-count:
-    description: 'Number of outdated URLs found (batch mode only)'
+    description: 'Number of outdated URLs found (batch mode only); always 0 in fix mode'
   uptodate-count:
-    description: 'Number of up-to-date URLs found (batch mode only)'
+    description: 'Number of up-to-date URLs found (batch mode only); always 0 in fix mode'
   total-count:
-    description: 'Total number of URLs checked (batch mode only)'
+    description: 'Total number of URLs checked (batch mode only); always 0 in fix mode'
   error-count:
-    description: 'Number of URLs that could not be checked (batch mode only)'
+    description: 'Number of URLs that could not be checked (batch mode), or number of paths that failed (fix mode)'
   errors:
-    description: 'JSON array of failed URLs and sanitized error messages (batch mode only)'
+    description: 'JSON array of failed URLs (batch mode) or failed paths (fix mode) with sanitized error messages'
 
 runs:
   using: 'composite'
@@ -158,49 +158,59 @@ runs:
           echo "### 🔧 Automatically Fixing Outdated URLs" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
+          FIX_FAILURES=0
+          FIX_ERRORS='[]'
+          record_fix_failure() {
+            FIX_FAILURES=$((FIX_FAILURES + 1))
+            FIX_ERRORS=$(jq -cn --argjson errors "$FIX_ERRORS" --arg url "$1" --arg message "$2" '$errors + [{url: $url, message: $message}]')
+            echo "::error::$2"
+            echo "- ❌ \`$1\`: $2" >> $GITHUB_STEP_SUMMARY
+          }
+
           for path in $SCAN_PATHS; do
             echo "----------------------------------------"
             echo "Processing path: $path"
             echo "----------------------------------------"
-            
-            if [ -f "$path" ]; then
-              echo "Type: File"
+
+            if [ -f "$path" ] || [ -d "$path" ]; then
+              if [ -f "$path" ]; then echo "Type: File"; else echo "Type: Directory"; fi
               echo "Running: /tmp/ocp-doc-checker -dir $path -fix"
               echo ""
-              /tmp/ocp-doc-checker -dir "$path" -fix 2>&1 || {
-                echo "::warning::Fix operation failed for $path with exit code $?"
-              }
-              echo ""
-            elif [ -d "$path" ]; then
-              echo "Type: Directory"
-              echo "Running: /tmp/ocp-doc-checker -dir $path -fix"
-              echo ""
-              /tmp/ocp-doc-checker -dir "$path" -fix 2>&1 || {
-                echo "::warning::Fix operation failed for $path with exit code $?"
-              }
+              # With -fix, the binary exits 0 when every URL was checked (and fixed if outdated);
+              # any non-zero exit means at least one URL could not be checked.
+              /tmp/ocp-doc-checker -dir "$path" -fix 2>&1 || \
+                record_fix_failure "$path" "Fix failed for $path (exit code $?)"
               echo ""
             else
-              echo "::warning::Path not found: $path"
+              record_fix_failure "$path" "Path not found: $path"
             fi
           done
-          
-          echo "=========================================="
-          echo "✅ FIX MODE COMPLETED"
-          echo "=========================================="
-          echo ""
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Fixes completed!**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All outdated documentation URLs have been updated to their latest versions." >> $GITHUB_STEP_SUMMARY
-          
-          # Set outputs for fix mode (we don't have detailed counts in fix mode)
+
+          # Fix mode does not compute per-URL counts; only error-count/errors are meaningful.
           echo "is-outdated=false" >> $GITHUB_OUTPUT
           echo "outdated-count=0" >> $GITHUB_OUTPUT
           echo "uptodate-count=0" >> $GITHUB_OUTPUT
           echo "total-count=0" >> $GITHUB_OUTPUT
-          echo "error-count=0" >> $GITHUB_OUTPUT
-          echo "errors=[]" >> $GITHUB_OUTPUT
-          
+          echo "error-count=$FIX_FAILURES" >> $GITHUB_OUTPUT
+          echo "errors=$FIX_ERRORS" >> $GITHUB_OUTPUT
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$FIX_FAILURES" -gt 0 ]; then
+            echo "=========================================="
+            echo "❌ FIX MODE FAILED for $FIX_FAILURES path(s)"
+            echo "=========================================="
+            echo "❌ **Fix mode failed for $FIX_FAILURES path(s).** Some URLs could not be checked, so they may still be outdated." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "=========================================="
+          echo "✅ FIX MODE COMPLETED"
+          echo "=========================================="
+          echo ""
+          echo "✅ **Fixes completed!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All outdated documentation URLs have been updated to their latest versions." >> $GITHUB_STEP_SUMMARY
+
           exit 0
         fi
         
