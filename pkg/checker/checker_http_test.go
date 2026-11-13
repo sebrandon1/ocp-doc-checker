@@ -37,6 +37,7 @@ func TestCheckURL_StatusHandling(t *testing.T) {
 	tests := []struct {
 		name         string
 		status       int
+		headStatus   int // if set, HEAD requests get this status instead of status
 		body         string
 		url          string
 		wantExists   bool
@@ -52,6 +53,9 @@ func TestCheckURL_StatusHandling(t *testing.T) {
 		{name: "403 is an error and not retried", status: 403, url: "/page", wantErr: true, wantRequests: 1},
 		{name: "503 is an error after retries", status: 503, url: "/page", wantErr: true, wantRequests: 3},
 		{name: "429 is an error after retries", status: 429, url: "/page", wantErr: true, wantRequests: 3},
+		{name: "HEAD 405 falls back to GET", status: 200, headStatus: 405, url: "/page", wantExists: true, wantRequests: 2},
+		{name: "HEAD 501 falls back to GET that 404s", status: 404, headStatus: 501, url: "/page", wantRequests: 2},
+		{name: "HEAD 403 does not fall back", status: 200, headStatus: 403, url: "/page", wantErr: true, wantRequests: 1},
 	}
 
 	for _, tt := range tests {
@@ -61,6 +65,10 @@ func TestCheckURL_StatusHandling(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
 				gotUA.Store(r.Header.Get("User-Agent"))
+				if tt.headStatus != 0 && r.Method == http.MethodHead {
+					w.WriteHeader(tt.headStatus)
+					return
+				}
 				w.WriteHeader(tt.status)
 				_, _ = w.Write([]byte(tt.body))
 			}))
@@ -73,9 +81,14 @@ func TestCheckURL_StatusHandling(t *testing.T) {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
 			if tt.wantErr {
+				// The error carries the HEAD status unless HEAD was rejected and retried as GET.
+				wantStatus := tt.status
+				if tt.headStatus != 0 && !headRejected(tt.headStatus) {
+					wantStatus = tt.headStatus
+				}
 				var statusErr *HTTPStatusError
-				if !errors.As(err, &statusErr) || statusErr.StatusCode != tt.status {
-					t.Errorf("err = %v, want *HTTPStatusError with status %d", err, tt.status)
+				if !errors.As(err, &statusErr) || statusErr.StatusCode != wantStatus {
+					t.Errorf("err = %v, want *HTTPStatusError with status %d", err, wantStatus)
 				}
 			}
 			if exists != tt.wantExists {
