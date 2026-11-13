@@ -72,9 +72,9 @@ test_outdated_url() {
 
 # Test 2: Current URL should pass
 test_current_url() {
-    echo "Testing current 4.20 URL..."
+    echo "Testing current 5.0 URL..."
     
-    local url="https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/disconnected_environments/index#mirroring-image-set-partial"
+    local url="https://docs.redhat.com/en/documentation/openshift_container_platform/5.0/html/release_notes/index"
     
     set +e
     OUTPUT=$(./ocp-doc-checker -url "$url" -json 2>&1)
@@ -96,10 +96,10 @@ test_current_url() {
         return 1
     fi
     
-    # Expected: latest_version = 4.20
+    # Expected: latest_version = 5.0
     LATEST=$(echo "$OUTPUT" | jq -r '.latest_version')
-    if [ "$LATEST" != "4.20" ]; then
-        echo "Expected latest_version=4.20, got $LATEST"
+    if [ "$LATEST" != "5.0" ]; then
+        echo "Expected latest_version=5.0, got $LATEST"
         return 1
     fi
     

@@ -59,7 +59,8 @@ func NewChecker() *Checker {
 		knownVersions: []string{
 			"4.10", "4.11", "4.12", "4.13", "4.14",
 			"4.15", "4.16", "4.17", "4.18", "4.19",
-			"4.20",
+			"4.20", "4.21", "4.22",
+			"5.0",
 		},
 		maxConcurrent: 5,
 		userAgent:     DefaultUserAgent,
