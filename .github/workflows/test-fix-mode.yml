@@ -298,3 +298,76 @@ jobs:
           
           echo "✅ Correctly left up-to-date URLs unchanged!"
 
+
+  test-fix-mode-reports-failure:
+    # Network-free: runs on every PR, even when docs.redhat.com is unreachable.
+    name: Test Fix Mode - Reports Failure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run fix mode on a missing path
+        uses: ./
+        id: fix-missing
+        continue-on-error: true
+        with:
+          paths: 'does-not-exist/'
+          fix: true
+
+      - name: Verify fix mode failed and reported the error
+        env:
+          OUTCOME: ${{ steps.fix-missing.outcome }}
+          ERROR_COUNT: ${{ steps.fix-missing.outputs.error-count }}
+          ERRORS: ${{ steps.fix-missing.outputs.errors }}
+        run: |
+          echo "outcome=$OUTCOME error-count=$ERROR_COUNT errors=$ERRORS"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "❌ ERROR: Expected fix mode to fail for a missing path, got '$OUTCOME'"
+            exit 1
+          fi
+          if [ "$ERROR_COUNT" != "1" ]; then
+            echo "❌ ERROR: Expected error-count=1, got '$ERROR_COUNT'"
+            exit 1
+          fi
+          if [ "$(printf '%s' "$ERRORS" | jq -r '.[0].url')" != "does-not-exist/" ]; then
+            echo "❌ ERROR: Expected errors[0].url=does-not-exist/"
+            exit 1
+          fi
+          echo "✅ Fix mode correctly failed and reported the missing path"
+
+      - name: Create file with a URL the checker cannot check
+        run: |
+          mkdir -p test-fix-unparseable
+          # Matches the scanner's URL pattern but fails parsing, so the binary
+          # exits non-zero without any network access.
+          echo "Link: https://docs.redhat.com/x/openshift_container_platform/4.17/foo" > test-fix-unparseable/doc.md
+
+      - name: Run fix mode on a path whose URL check fails
+        uses: ./
+        id: fix-unparseable
+        continue-on-error: true
+        with:
+          paths: 'test-fix-unparseable/'
+          fix: true
+
+      - name: Verify fix mode failed when the checker failed
+        env:
+          OUTCOME: ${{ steps.fix-unparseable.outcome }}
+          ERROR_COUNT: ${{ steps.fix-unparseable.outputs.error-count }}
+          ERRORS: ${{ steps.fix-unparseable.outputs.errors }}
+        run: |
+          echo "outcome=$OUTCOME error-count=$ERROR_COUNT errors=$ERRORS"
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "❌ ERROR: Expected fix mode to fail when the checker fails, got '$OUTCOME'"
+            exit 1
+          fi
+          if [ "$ERROR_COUNT" != "1" ]; then
+            echo "❌ ERROR: Expected error-count=1, got '$ERROR_COUNT'"
+            exit 1
+          fi
+          if ! printf '%s' "$ERRORS" | jq -e '.[0].message | test("exit code [1-9]")' >/dev/null; then
+            echo "❌ ERROR: Expected errors[0].message to report the non-zero exit code"
+            exit 1
+          fi
+          echo "✅ Fix mode correctly failed when the checker could not check a URL"
