@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sebrandon1/ocp-doc-checker/pkg/parser"
@@ -76,6 +77,29 @@ type CheckResult struct {
 // DefaultUserAgent identifies the tool to documentation servers.
 const DefaultUserAgent = "ocp-doc-checker (+https://github.com/sebrandon1/ocp-doc-checker)"
 
+// pageInfo is the cached outcome of fetching a documentation page (fragment
+// removed). ids holds every id and a[name] value on the page and is nil when
+// the page was fetched without parsing its body.
+type pageInfo struct {
+	exists bool
+	ids    map[string]struct{}
+}
+
+// satisfies reports whether this entry can answer a check that may need the
+// page's anchors.
+func (p *pageInfo) satisfies(needIDs bool) bool {
+	if !p.exists {
+		return true // a missing page has no anchors to look up
+	}
+	return !needIDs || p.ids != nil
+}
+
+// fetchCall is one in-flight page fetch that other callers can wait on.
+type fetchCall struct {
+	done chan struct{}
+	err  error
+}
+
 // Checker handles checking OCP documentation URLs
 type Checker struct {
 	client        *http.Client
@@ -83,6 +107,13 @@ type Checker struct {
 	maxConcurrent int
 	userAgent     string
 	retryDelay    time.Duration
+
+	// cache holds definitive fetch results, keyed by base URL (no fragment).
+	// inflight deduplicates concurrent fetches of the same base URL. Both are
+	// guarded by cacheMu so the cache stays safe under concurrent checks.
+	cacheMu  sync.Mutex
+	cache    map[string]*pageInfo
+	inflight map[string]*fetchCall
 }
 
 // NewChecker creates a new Checker instance
@@ -105,6 +136,8 @@ func NewChecker() *Checker {
 		maxConcurrent: 5,
 		userAgent:     DefaultUserAgent,
 		retryDelay:    2 * time.Second,
+		cache:         map[string]*pageInfo{},
+		inflight:      map[string]*fetchCall{},
 	}
 }
 
@@ -228,10 +261,10 @@ func (c *Checker) do(method, rawURL string) (*http.Response, error) {
 // A 404/410 means the page does not exist and is not an error. Any other
 // non-2xx/3xx status is returned as an *HTTPStatusError, because it says
 // nothing about whether the page exists.
+//
+// Pages are fetched through fetchPage, so every base URL is requested at most
+// once per Checker and anchor checks reuse the page's collected IDs.
 func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
-	maxRetries := 3
-	var lastErr error
-
 	// Parse URL to extract fragment/anchor
 	fragment := ""
 	baseURL := urlString
@@ -242,6 +275,72 @@ func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
 
 	hasAnchor := fragment != ""
 
+	info, err := c.fetchPage(baseURL, hasAnchor)
+	if err != nil {
+		return false, false, hasAnchor, err
+	}
+	if !info.exists {
+		return false, false, hasAnchor, nil
+	}
+	if !hasAnchor {
+		return true, false, false, nil
+	}
+
+	_, anchorExists := info.ids[fragment]
+	return true, anchorExists, true, nil
+}
+
+// fetchPage returns the page at baseURL (no fragment), fetching it at most once
+// per Checker. needIDs asks for the page's anchors, which requires a GET and an
+// HTML parse; a cached HEAD-only entry is upgraded to a GET when a later URL
+// needs anchors. Errors are not cached.
+func (c *Checker) fetchPage(baseURL string, needIDs bool) (*pageInfo, error) {
+	for {
+		c.cacheMu.Lock()
+		if c.cache == nil {
+			c.cache = map[string]*pageInfo{}
+		}
+		if c.inflight == nil {
+			c.inflight = map[string]*fetchCall{}
+		}
+		if info, ok := c.cache[baseURL]; ok && info.satisfies(needIDs) {
+			c.cacheMu.Unlock()
+			return info, nil
+		}
+		// Another caller is already fetching this page: wait for it, then look
+		// again in case its result answers this check too.
+		if call, ok := c.inflight[baseURL]; ok {
+			c.cacheMu.Unlock()
+			<-call.done
+			if call.err != nil {
+				return nil, call.err
+			}
+			continue
+		}
+		call := &fetchCall{done: make(chan struct{})}
+		c.inflight[baseURL] = call
+		c.cacheMu.Unlock()
+
+		info, err := c.fetchPageUncached(baseURL, needIDs)
+
+		c.cacheMu.Lock()
+		delete(c.inflight, baseURL)
+		if err == nil {
+			c.cache[baseURL] = info // only definitive results are cached
+		}
+		c.cacheMu.Unlock()
+
+		call.err = err
+		close(call.done)
+		return info, err
+	}
+}
+
+// fetchPageUncached performs the HTTP requests and retries that fill the cache.
+func (c *Checker) fetchPageUncached(baseURL string, needIDs bool) (*pageInfo, error) {
+	maxRetries := 3
+	var lastErr error
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			// Wait a bit before retrying (linear backoff)
@@ -251,11 +350,11 @@ func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
 		var resp *http.Response
 		var err error
 
-		if hasAnchor {
-			// If we need to check anchor, use GET to fetch the HTML
+		if needIDs {
+			// If we need to check anchors, use GET to fetch the HTML
 			resp, err = c.do(http.MethodGet, baseURL)
 		} else {
-			// No anchor, use HEAD for efficiency
+			// No anchors needed, use HEAD for efficiency
 			resp, err = c.do(http.MethodHead, baseURL)
 			if err != nil || headRejected(resp.StatusCode) {
 				// HEAD failed or isn't supported here; ask again with GET
@@ -271,83 +370,86 @@ func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
 			continue // Retry
 		}
 
-		pageExists, anchorExists, retry, err := c.handleResponse(resp, baseURL, fragment)
+		info, retry, err := c.handleResponse(resp, baseURL, needIDs)
 		_ = resp.Body.Close()
 		if err != nil {
 			lastErr = err
 			if retry {
 				continue
 			}
-			return false, false, hasAnchor, err
+			return nil, err
 		}
-		return pageExists, anchorExists, hasAnchor, nil
+		return info, nil
 	}
 
-	return false, false, hasAnchor, lastErr
+	return nil, lastErr
 }
 
 // handleResponse interprets a single HTTP response.
-// Returns: (pageExists, anchorExists, retry, error)
-func (c *Checker) handleResponse(resp *http.Response, baseURL, fragment string) (bool, bool, bool, error) {
+// Returns: (info, retry, error)
+func (c *Checker) handleResponse(resp *http.Response, baseURL string, needIDs bool) (*pageInfo, bool, error) {
 	switch {
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
 		// Page genuinely doesn't exist for this version
-		return false, false, false, nil
+		return &pageInfo{exists: false}, false, nil
 	case resp.StatusCode < 200 || resp.StatusCode >= 400:
 		statusErr := &HTTPStatusError{URL: baseURL, StatusCode: resp.StatusCode}
-		return false, false, isRetryableStatus(resp.StatusCode), statusErr
+		return nil, isRetryableStatus(resp.StatusCode), statusErr
 	}
 
 	// Page exists (2xx or 3xx)
-	if fragment == "" {
-		return true, false, false, nil
+	if !needIDs {
+		return &pageInfo{exists: true}, false, nil
 	}
 
-	// Validate anchor exists in HTML
-	anchorExists, err := c.checkAnchorInHTML(resp.Body, fragment)
+	ids, err := collectAnchorIDs(resp.Body)
 	if err != nil {
-		return false, false, true, err
+		return nil, true, err
 	}
-	return true, anchorExists, false, nil
+	return &pageInfo{exists: true, ids: ids}, false, nil
 }
 
 // checkAnchorInHTML parses HTML and checks if an anchor/fragment exists
 func (c *Checker) checkAnchorInHTML(body io.Reader, anchor string) (bool, error) {
+	ids, err := collectAnchorIDs(body)
+	if err != nil {
+		return false, err
+	}
+	_, found := ids[anchor]
+	return found, nil
+}
+
+// collectAnchorIDs parses HTML and returns every id attribute and legacy
+// <a name> value on the page.
+func collectAnchorIDs(body io.Reader) (map[string]struct{}, error) {
 	doc, err := html.Parse(body)
 	if err != nil {
-		return false, fmt.Errorf("failed to parse HTML: %w", err)
+		return nil, fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
-	found := false
-	var checkNode func(*html.Node)
-	checkNode = func(n *html.Node) {
-		if found {
-			return
-		}
-
+	ids := make(map[string]struct{})
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
-			// Check for id attribute
 			for _, attr := range n.Attr {
-				if attr.Key == "id" && attr.Val == anchor {
-					found = true
-					return
+				// Check for id attribute
+				if attr.Key == "id" {
+					ids[attr.Val] = struct{}{}
 				}
 				// Also check for name attribute (older HTML anchor style)
-				if n.Data == "a" && attr.Key == "name" && attr.Val == anchor {
-					found = true
-					return
+				if n.Data == "a" && attr.Key == "name" {
+					ids[attr.Val] = struct{}{}
 				}
 			}
 		}
 
-		// Recursively check child nodes
 		for child := n.FirstChild; child != nil; child = child.NextSibling {
-			checkNode(child)
+			walk(child)
 		}
 	}
 
-	checkNode(doc)
-	return found, nil
+	walk(doc)
+	return ids, nil
 }
 
 // getNewerVersions returns versions newer than the given version

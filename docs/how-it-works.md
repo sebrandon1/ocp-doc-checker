@@ -21,7 +21,7 @@ This prevents suggesting URLs where the documentation page exists but the specif
 
 **Example:** If you have a URL pointing to 4.17 with anchor `#installing-sr-iov-operator_installing-sriov-operator`, and in 4.19 the SR-IOV content moved from the networking guide to the hardware_networks guide, the tool will detect that the anchor doesn't exist in the 4.19 networking guide and won't suggest it as an upgrade path.
 
-**Performance Note:** Anchor validation requires fetching and parsing full HTML pages, which is slower than simple HEAD requests. For URLs without anchors, the tool uses fast HEAD requests. URLs with anchors will take longer to validate (typically 1-3 seconds per URL).
+**Performance Note:** Anchor validation requires fetching and parsing full HTML pages, which is slower than simple HEAD requests. For URLs without anchors, the tool uses fast HEAD requests. URLs with anchors will take longer to validate (typically 1-3 seconds per URL). Fetched pages are cached for the lifetime of the checker, so many links into the same document (for example, several anchors in one `html-single` guide) cost one fetch per version rather than one per link.
 
 ## Supported URL Formats
 
