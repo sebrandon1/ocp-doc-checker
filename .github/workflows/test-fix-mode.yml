@@ -10,8 +10,23 @@ on:
 permissions: read-all
 
 jobs:
+  docs-preflight:
+    name: Check docs.redhat.com reachability
+    runs-on: ubuntu-latest
+    outputs:
+      reachable: ${{ steps.probe.outputs.reachable }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Probe docs.redhat.com
+        id: probe
+        run: ./scripts/check-docs-reachable.sh
+
   test-fix-mode:
     name: Test Automatic URL Fixing
+    needs: docs-preflight
+    if: needs.docs-preflight.outputs.reachable == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -128,6 +143,8 @@ jobs:
 
   test-fix-mode-multiple-files:
     name: Test Fix Mode - Multiple Files
+    needs: docs-preflight
+    if: needs.docs-preflight.outputs.reachable == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -210,6 +227,8 @@ jobs:
 
   test-fix-mode-default-path:
     name: Test Fix Mode - Default Path
+    needs: docs-preflight
+    if: needs.docs-preflight.outputs.reachable == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -243,6 +262,8 @@ jobs:
 
   test-fix-mode-no-outdated:
     name: Test Fix Mode - No Outdated URLs
+    needs: docs-preflight
+    if: needs.docs-preflight.outputs.reachable == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

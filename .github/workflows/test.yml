@@ -9,6 +9,19 @@ on:
 permissions: read-all
 
 jobs:
+  docs-preflight:
+    name: Check docs.redhat.com reachability
+    runs-on: ubuntu-latest
+    outputs:
+      reachable: ${{ steps.probe.outputs.reachable }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Probe docs.redhat.com
+        id: probe
+        run: ./scripts/check-docs-reachable.sh
+
   test-go:
     name: Run Go Tests
     runs-on: ubuntu-latest
@@ -29,17 +42,18 @@ jobs:
 
   test-cli:
     name: Test CLI - ${{ matrix.test.name }}
+    needs: docs-preflight
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         test:
-          - { name: 'Outdated URL', script: 'test-outdated-url.sh', continue: true }
-          - { name: 'Current URL', script: 'test-current-url.sh', continue: false }
-          - { name: 'URL Accessibility', script: 'test-url-accessibility.sh', continue: false }
-          - { name: 'Invalid URL', script: 'test-invalid-url.sh', continue: false }
-          - { name: 'URL Replacement', script: 'test-url-replacement.sh', continue: false }
-          - { name: 'Anchor Validation', script: 'test-anchor-validation.sh', continue: false }
+          - { name: 'Outdated URL', script: 'test-outdated-url.sh', continue: true, network: true }
+          - { name: 'Current URL', script: 'test-current-url.sh', continue: false, network: true }
+          - { name: 'URL Accessibility', script: 'test-url-accessibility.sh', continue: false, network: true }
+          - { name: 'Invalid URL', script: 'test-invalid-url.sh', continue: false, network: false }
+          - { name: 'URL Replacement', script: 'test-url-replacement.sh', continue: false, network: true }
+          - { name: 'Anchor Validation', script: 'test-anchor-validation.sh', continue: false, network: true }
     steps:
       - name: Check Red Hat Status
         uses: palmsoftware/redhat-status@v0
@@ -55,15 +69,23 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      - name: Skip notice
+        if: matrix.test.network && needs.docs-preflight.outputs.reachable != 'true'
+        run: echo "::warning::Skipping '${{ matrix.test.name }}' because docs.redhat.com is unreachable from this runner"
+
       - name: Build tool
+        if: ${{ !matrix.test.network || needs.docs-preflight.outputs.reachable == 'true' }}
         run: go build -o ocp-doc-checker .
 
       - name: Run test - ${{ matrix.test.name }}
+        if: ${{ !matrix.test.network || needs.docs-preflight.outputs.reachable == 'true' }}
         continue-on-error: ${{ matrix.test.continue }}
         run: ./scripts/${{ matrix.test.script }}
 
   test-action:
     name: Test GitHub Action
+    needs: docs-preflight
+    if: needs.docs-preflight.outputs.reachable == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

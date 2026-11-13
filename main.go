@@ -72,6 +72,7 @@ func main() {
 
 	// Create checker
 	c := checker.NewChecker()
+	c.SetUserAgent(fmt.Sprintf("ocp-doc-checker/%s (+https://github.com/sebrandon1/ocp-doc-checker)", version))
 
 	// Handle based on mode
 	if *urlFlag != "" {

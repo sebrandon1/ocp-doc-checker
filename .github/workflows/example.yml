@@ -9,9 +9,24 @@ on:
 permissions: read-all
 
 jobs:
+  docs-preflight:
+    name: Check docs.redhat.com reachability
+    runs-on: ubuntu-latest
+    outputs:
+      reachable: ${{ steps.probe.outputs.reachable }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Probe docs.redhat.com
+        id: probe
+        run: ./scripts/check-docs-reachable.sh
+
   single-url-check:
     runs-on: ubuntu-latest
     name: Single URL Check Example
+    needs: docs-preflight
+    if: needs.docs-preflight.outputs.reachable == 'true'
     steps:
       - name: Check Red Hat Status
         uses: palmsoftware/redhat-status@v0

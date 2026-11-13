@@ -33,11 +33,16 @@ type CheckResult struct {
 	AllResults      []VersionCheckResult
 }
 
+// DefaultUserAgent identifies the tool to documentation servers.
+const DefaultUserAgent = "ocp-doc-checker (+https://github.com/sebrandon1/ocp-doc-checker)"
+
 // Checker handles checking OCP documentation URLs
 type Checker struct {
 	client        *http.Client
 	knownVersions []string
 	maxConcurrent int
+	userAgent     string
+	retryDelay    time.Duration
 }
 
 // NewChecker creates a new Checker instance
@@ -57,12 +62,19 @@ func NewChecker() *Checker {
 			"4.20",
 		},
 		maxConcurrent: 5,
+		userAgent:     DefaultUserAgent,
+		retryDelay:    2 * time.Second,
 	}
 }
 
 // SetVersions allows setting custom versions to check
 func (c *Checker) SetVersions(versions []string) {
 	c.knownVersions = versions
+}
+
+// SetUserAgent overrides the User-Agent header sent with requests
+func (c *Checker) SetUserAgent(ua string) {
+	c.userAgent = ua
 }
 
 // Check performs the URL check
@@ -82,6 +94,9 @@ func (c *Checker) Check(rawURL string) (*CheckResult, error) {
 	// Filter versions to check (only those newer than current)
 	versionsToCheck := c.getNewerVersions(docURL.Version)
 
+	var firstErr error
+	errCount := 0
+
 	// Check each version
 	for _, version := range versionsToCheck {
 		checkURL := docURL.BuildURL(version)
@@ -99,10 +114,24 @@ func (c *Checker) Check(rawURL string) (*CheckResult, error) {
 
 		result.AllResults = append(result.AllResults, versionResult)
 
+		if err != nil {
+			errCount++
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+
 		// Only consider it a valid newer version if both page and anchor (if present) exist
 		if exists && (!hasAnchor || anchorExists) {
 			result.NewerVersions = append(result.NewerVersions, versionResult)
 		}
+	}
+
+	// If no newer version could be checked at all, we cannot claim the URL is
+	// up to date. Surface the failure instead of silently reporting "current".
+	if errCount > 0 && errCount == len(versionsToCheck) {
+		return nil, fmt.Errorf("unable to check any newer version of %s: %w", rawURL, firstErr)
 	}
 
 	// Determine if outdated and latest version
@@ -117,8 +146,43 @@ func (c *Checker) Check(rawURL string) (*CheckResult, error) {
 	return result, nil
 }
 
+// HTTPStatusError reports an HTTP response that neither confirms nor denies
+// that a page exists (e.g. 403 from bot protection, 429, 5xx).
+type HTTPStatusError struct {
+	URL        string
+	StatusCode int
+}
+
+func (e *HTTPStatusError) Error() string {
+	msg := fmt.Sprintf("unexpected HTTP %d %s from %s", e.StatusCode, http.StatusText(e.StatusCode), e.URL)
+	if e.StatusCode == http.StatusForbidden {
+		msg += " (access denied; the documentation site may be blocking automated requests)"
+	}
+	return msg
+}
+
+// isRetryableStatus reports whether a status code is worth retrying.
+func isRetryableStatus(code int) bool {
+	return code == http.StatusTooManyRequests || code >= 500
+}
+
+func (c *Checker) do(method, rawURL string) (*http.Response, error) {
+	req, err := http.NewRequest(method, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
+	return c.client.Do(req)
+}
+
 // checkURL checks if a URL exists and validates anchor if present
 // Returns: (pageExists, anchorExists, hasAnchor, error)
+//
+// A 404/410 means the page does not exist and is not an error. Any other
+// non-2xx/3xx status is returned as an *HTTPStatusError, because it says
+// nothing about whether the page exists.
 func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
 	maxRetries := 3
 	var lastErr error
@@ -135,23 +199,22 @@ func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			// Wait a bit before retrying (exponential backoff)
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			// Wait a bit before retrying (linear backoff)
+			time.Sleep(time.Duration(attempt) * c.retryDelay)
 		}
 
-		// First check if the base URL exists
 		var resp *http.Response
 		var err error
 
 		if hasAnchor {
 			// If we need to check anchor, use GET to fetch the HTML
-			resp, err = c.client.Get(baseURL)
+			resp, err = c.do(http.MethodGet, baseURL)
 		} else {
 			// No anchor, use HEAD for efficiency
-			resp, err = c.client.Head(baseURL)
+			resp, err = c.do(http.MethodHead, baseURL)
 			if err != nil {
 				// If HEAD fails, try GET
-				resp, err = c.client.Get(baseURL)
+				resp, err = c.do(http.MethodGet, baseURL)
 			}
 		}
 
@@ -159,38 +222,45 @@ func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
 			lastErr = err
 			continue // Retry
 		}
-		defer resp.Body.Close()
 
-		// Check if page exists
-		if resp.StatusCode >= 400 {
-			// 4xx or 5xx - page doesn't exist, no point retrying
-			return false, false, hasAnchor, nil
-		}
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-			// Unexpected status code
-			continue // Retry
-		}
-
-		// Page exists (2xx or 3xx)
-		pageExists := true
-
-		// If no anchor, we're done
-		if !hasAnchor {
-			return pageExists, false, hasAnchor, nil
-		}
-
-		// Validate anchor exists in HTML
-		anchorExists, err := c.checkAnchorInHTML(resp.Body, fragment)
+		pageExists, anchorExists, retry, err := c.handleResponse(resp, baseURL, fragment)
+		_ = resp.Body.Close()
 		if err != nil {
 			lastErr = err
-			continue // Retry
+			if retry {
+				continue
+			}
+			return false, false, hasAnchor, err
 		}
-
 		return pageExists, anchorExists, hasAnchor, nil
 	}
 
 	return false, false, hasAnchor, lastErr
+}
+
+// handleResponse interprets a single HTTP response.
+// Returns: (pageExists, anchorExists, retry, error)
+func (c *Checker) handleResponse(resp *http.Response, baseURL, fragment string) (bool, bool, bool, error) {
+	switch {
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+		// Page genuinely doesn't exist for this version
+		return false, false, false, nil
+	case resp.StatusCode < 200 || resp.StatusCode >= 400:
+		statusErr := &HTTPStatusError{URL: baseURL, StatusCode: resp.StatusCode}
+		return false, false, isRetryableStatus(resp.StatusCode), statusErr
+	}
+
+	// Page exists (2xx or 3xx)
+	if fragment == "" {
+		return true, false, false, nil
+	}
+
+	// Validate anchor exists in HTML
+	anchorExists, err := c.checkAnchorInHTML(resp.Body, fragment)
+	if err != nil {
+		return false, false, true, err
+	}
+	return true, anchorExists, false, nil
 }
 
 // checkAnchorInHTML parses HTML and checks if an anchor/fragment exists
@@ -258,8 +328,8 @@ func (c *Checker) getNewerVersions(currentVersion string) []string {
 	sort.Slice(newer, func(i, j int) bool {
 		vi := &parser.OCPDocURL{Version: newer[i]}
 		vj := &parser.OCPDocURL{Version: newer[j]}
-		parseVersionInPlace(vi)
-		parseVersionInPlace(vj)
+		_ = parseVersionInPlace(vi) // already validated above
+		_ = parseVersionInPlace(vj)
 		return vi.GetVersionFloat() < vj.GetVersionFloat()
 	})
 
