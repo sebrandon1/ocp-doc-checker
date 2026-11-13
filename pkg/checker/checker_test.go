@@ -183,3 +183,31 @@ func TestGetNewerVersions_CrossMajorOrdering(t *testing.T) {
 		t.Errorf("getNewerVersions(4.9) = %s, want %s", got, want)
 	}
 }
+
+func TestVersionCheckResultState(t *testing.T) {
+	blocked := &HTTPStatusError{URL: "u", StatusCode: 403}
+	tests := []struct {
+		name       string
+		result     VersionCheckResult
+		want       VersionState
+		wantUsable bool
+	}{
+		{name: "error wins over other fields", result: VersionCheckResult{Error: blocked, Exists: true}, want: StateError},
+		{name: "not found", result: VersionCheckResult{}, want: StateNotFound},
+		{name: "found without anchor", result: VersionCheckResult{Exists: true}, want: StateFound, wantUsable: true},
+		{name: "anchor found", result: VersionCheckResult{Exists: true, HasAnchor: true, AnchorExists: true}, want: StateAnchorFound, wantUsable: true},
+		{name: "anchor missing", result: VersionCheckResult{Exists: true, HasAnchor: true}, want: StateAnchorMissing},
+		{name: "not found ignores anchor fields", result: VersionCheckResult{HasAnchor: true, AnchorExists: true}, want: StateNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.result.State()
+			if got != tt.want {
+				t.Errorf("State() = %q, want %q", got, tt.want)
+			}
+			if got.Usable() != tt.wantUsable {
+				t.Errorf("Usable() = %v, want %v", got.Usable(), tt.wantUsable)
+			}
+		})
+	}
+}
