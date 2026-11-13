@@ -33,20 +33,28 @@ inputs:
 outputs:
   is-outdated:
     description: 'Whether the documentation is outdated (true/false). For batch mode, true if any URLs are outdated.'
+    value: ${{ steps.check.outputs.is-outdated }}
   latest-version:
     description: 'The latest version where the documentation exists (single URL mode only)'
+    value: ${{ steps.check.outputs.latest-version }}
   newer-versions:
     description: 'JSON array of newer versions where the documentation exists (single URL mode only)'
+    value: ${{ steps.check.outputs.newer-versions }}
   outdated-count:
     description: 'Number of outdated URLs found (batch mode only); always 0 in fix mode'
+    value: ${{ steps.check.outputs.outdated-count }}
   uptodate-count:
     description: 'Number of up-to-date URLs found (batch mode only); always 0 in fix mode'
+    value: ${{ steps.check.outputs.uptodate-count }}
   total-count:
     description: 'Total number of URLs checked (batch mode only); always 0 in fix mode'
+    value: ${{ steps.check.outputs.total-count }}
   error-count:
     description: 'Number of URLs that could not be checked (batch mode), or number of paths that failed (fix mode)'
+    value: ${{ steps.check.outputs.error-count }}
   errors:
     description: 'JSON array of failed URLs (batch mode) or failed paths (fix mode) with sanitized error messages'
+    value: ${{ steps.check.outputs.errors }}
 
 runs:
   using: 'composite'
