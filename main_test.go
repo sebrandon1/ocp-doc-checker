@@ -302,3 +302,28 @@ func TestBatchJSONResultUsesEmptyArrayForNoResults(t *testing.T) {
 		t.Errorf("results = %s, want []", got)
 	}
 }
+
+func TestVersionStatusLabel(t *testing.T) {
+	blocked := &checker.HTTPStatusError{URL: "https://docs.redhat.com/x", StatusCode: 403}
+	tests := []struct {
+		name   string
+		result checker.VersionCheckResult
+		want   string
+		prefix bool // error text follows the label, so match the start only
+	}{
+		// A failed check must not be reported as "Not found".
+		{name: "error", result: checker.VersionCheckResult{Error: blocked}, want: "⚠ Check failed (unexpected HTTP 403", prefix: true},
+		{name: "not found", result: checker.VersionCheckResult{}, want: "✗ Not found"},
+		{name: "found", result: checker.VersionCheckResult{Exists: true}, want: "✓ Found"},
+		{name: "anchor found", result: checker.VersionCheckResult{Exists: true, HasAnchor: true, AnchorExists: true}, want: "✓ Found (page + anchor)"},
+		{name: "anchor missing", result: checker.VersionCheckResult{Exists: true, HasAnchor: true}, want: "⚠ Page found, anchor missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := versionStatusLabel(tt.result)
+			if ok := got == tt.want || (tt.prefix && strings.HasPrefix(got, tt.want)); !ok {
+				t.Errorf("versionStatusLabel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

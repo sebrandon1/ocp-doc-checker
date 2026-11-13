@@ -402,29 +402,20 @@ func printTextResults(result *checker.CheckResult, verbose bool) {
 		if verbose {
 			fmt.Println("\nAll checked versions:")
 			for _, v := range result.AllResults {
-				status := "✗ Not found"
-				if v.Exists {
-					if v.HasAnchor {
-						if v.AnchorExists {
-							status = "✓ Found (page + anchor)"
-						} else {
-							status = "⚠ Page found, anchor missing"
-						}
-					} else {
-						status = "✓ Found"
-					}
-				}
-				fmt.Printf("  %s Version %s: %s\n", status, v.Version, v.URL)
+				fmt.Printf("  %s Version %s: %s\n", versionStatusLabel(v), v.Version, v.URL)
 			}
 		}
 	} else {
 		fmt.Printf("✓ This documentation is UP TO DATE (version %s)\n", result.LatestVersion)
 
-		// Check if there are newer versions with missing anchors
-		missingAnchors := []checker.VersionCheckResult{}
+		// Note newer versions with missing anchors, and versions that could not be checked
+		var missingAnchors, failed []checker.VersionCheckResult
 		for _, v := range result.AllResults {
-			if v.Exists && v.HasAnchor && !v.AnchorExists {
+			switch v.State() {
+			case checker.StateAnchorMissing:
 				missingAnchors = append(missingAnchors, v)
+			case checker.StateError:
+				failed = append(failed, v)
 			}
 		}
 
@@ -435,24 +426,35 @@ func printTextResults(result *checker.CheckResult, verbose bool) {
 			}
 		}
 
+		if len(failed) > 0 {
+			fmt.Println("\n⚠️  Note: Some newer versions could not be checked:")
+			for _, v := range failed {
+				fmt.Printf("  - Version %s: %v\n", v.Version, v.Error)
+			}
+		}
+
 		if verbose {
 			fmt.Println("\nChecked versions:")
 			for _, v := range result.AllResults {
-				status := "✗ Not found"
-				if v.Exists {
-					if v.HasAnchor {
-						if v.AnchorExists {
-							status = "✓ Found (page + anchor)"
-						} else {
-							status = "⚠ Page found, anchor missing"
-						}
-					} else {
-						status = "✓ Found"
-					}
-				}
-				fmt.Printf("  %s Version %s\n", status, v.Version)
+				fmt.Printf("  %s Version %s\n", versionStatusLabel(v), v.Version)
 			}
 		}
+	}
+}
+
+// versionStatusLabel describes one version check for verbose output.
+func versionStatusLabel(v checker.VersionCheckResult) string {
+	switch v.State() {
+	case checker.StateError:
+		return fmt.Sprintf("⚠ Check failed (%v)", v.Error)
+	case checker.StateFound:
+		return "✓ Found"
+	case checker.StateAnchorFound:
+		return "✓ Found (page + anchor)"
+	case checker.StateAnchorMissing:
+		return "⚠ Page found, anchor missing"
+	default:
+		return "✗ Not found"
 	}
 }
 

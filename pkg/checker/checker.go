@@ -23,6 +23,46 @@ type VersionCheckResult struct {
 	CheckedAt    time.Time
 }
 
+// VersionState is the outcome of checking one version, derived from the
+// fields of a VersionCheckResult.
+type VersionState string
+
+const (
+	// StateError means the check failed (e.g. 403, 5xx, network error), so
+	// it is unknown whether the page exists.
+	StateError VersionState = "error"
+	// StateNotFound means the page does not exist for this version.
+	StateNotFound VersionState = "not_found"
+	// StateFound means the page exists and the URL has no anchor.
+	StateFound VersionState = "found"
+	// StateAnchorFound means the page exists and contains the anchor.
+	StateAnchorFound VersionState = "anchor_found"
+	// StateAnchorMissing means the page exists but the anchor does not.
+	StateAnchorMissing VersionState = "anchor_missing"
+)
+
+// Usable reports whether the URL can be moved to this version: the page
+// exists and so does the anchor, if any.
+func (s VersionState) Usable() bool {
+	return s == StateFound || s == StateAnchorFound
+}
+
+// State derives the outcome of this version check.
+func (r VersionCheckResult) State() VersionState {
+	switch {
+	case r.Error != nil:
+		return StateError
+	case !r.Exists:
+		return StateNotFound
+	case !r.HasAnchor:
+		return StateFound
+	case r.AnchorExists:
+		return StateAnchorFound
+	default:
+		return StateAnchorMissing
+	}
+}
+
 // CheckResult represents the complete check result
 type CheckResult struct {
 	OriginalURL     string
@@ -115,16 +155,13 @@ func (c *Checker) Check(rawURL string) (*CheckResult, error) {
 
 		result.AllResults = append(result.AllResults, versionResult)
 
-		if err != nil {
+		switch state := versionResult.State(); {
+		case state == StateError:
 			errCount++
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue
-		}
-
-		// Only consider it a valid newer version if both page and anchor (if present) exist
-		if exists && (!hasAnchor || anchorExists) {
+		case state.Usable():
 			result.NewerVersions = append(result.NewerVersions, versionResult)
 		}
 	}
