@@ -12,8 +12,25 @@ on:
 permissions: read-all
 
 jobs:
+  docs-preflight:
+    name: Check docs.redhat.com reachability
+    runs-on: ubuntu-latest
+    outputs:
+      reachable: ${{ steps.probe.outputs.reachable }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Probe docs.redhat.com
+        id: probe
+        run: ./scripts/check-docs-reachable.sh
+
   nightly-tests:
     name: Nightly Integration Tests with Real Docs
+    needs: docs-preflight
+    # On PRs, skip when the docs site blocks the runner (unrelated to the change).
+    # On scheduled/manual runs, always run so a blocked site shows up as a failure.
+    if: needs.docs-preflight.outputs.reachable == 'true' || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Check Red Hat Status
