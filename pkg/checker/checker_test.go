@@ -153,3 +153,33 @@ func TestCheckURL_FragmentParsing(t *testing.T) {
 		})
 	}
 }
+
+func TestGetNewerVersions(t *testing.T) {
+	c := NewChecker()
+	tests := []struct {
+		current string
+		want    []string
+	}{
+		{"4.19", []string{"4.20", "4.21", "4.22", "5.0"}},
+		{"4.22", []string{"5.0"}},
+		{"5.0", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.current, func(t *testing.T) {
+			got := c.getNewerVersions(tt.current)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("getNewerVersions(%s) = %v, want %v", tt.current, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetNewerVersions_CrossMajorOrdering(t *testing.T) {
+	c := NewChecker()
+	// Deliberately unsorted, spanning the 4.x -> 5.x boundary.
+	c.SetVersions([]string{"5.1", "4.9", "5.0", "4.22", "4.10"})
+	got := strings.Join(c.getNewerVersions("4.9"), ",")
+	if want := "4.10,4.22,5.0,5.1"; got != want {
+		t.Errorf("getNewerVersions(4.9) = %s, want %s", got, want)
+	}
+}

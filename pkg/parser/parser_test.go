@@ -51,6 +51,15 @@ func TestParseOCPDocURL(t *testing.T) {
 			wantErr:     false,
 		},
 		{
+			name:        "OCP 5.0 multi-page URL",
+			url:         "https://docs.redhat.com/en/documentation/openshift_container_platform/5.0/html/release_notes/index",
+			wantVersion: "5.0",
+			wantDoc:     "release_notes",
+			wantPage:    "index",
+			wantAnchor:  "",
+			wantErr:     false,
+		},
+		{
 			name:    "Invalid URL - not Red Hat",
 			url:     "https://example.com/docs",
 			wantErr: true,

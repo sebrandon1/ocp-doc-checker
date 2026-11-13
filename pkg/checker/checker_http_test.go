@@ -124,6 +124,7 @@ func TestCheck_PartialFailureStillReportsFound(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestChecker(t, srv)
+	c.SetVersions([]string{"4.18", "4.19", "4.20"})
 	result, err := c.Check(testDocURL)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
