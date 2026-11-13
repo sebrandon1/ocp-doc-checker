@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // newTestChecker returns a Checker whose requests are all routed to srv,
@@ -169,5 +171,231 @@ func TestCheck_NotFoundEverywhereIsUpToDate(t *testing.T) {
 	}
 	if result.IsOutdated || result.LatestVersion != "4.18" {
 		t.Errorf("got outdated=%v latest=%s, want outdated=false latest=4.18", result.IsOutdated, result.LatestVersion)
+	}
+}
+
+// countRequests records how many requests hit each URL path.
+type countRequests struct {
+	mu     sync.Mutex
+	counts map[string]int
+	total  int
+}
+
+func (c *countRequests) add(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.counts == nil {
+		c.counts = map[string]int{}
+	}
+	c.counts[path]++
+	c.total++
+}
+
+func (c *countRequests) totalCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.total
+}
+
+func (c *countRequests) forPath(path string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.counts[path]
+}
+
+func TestCheck_ReusesFetchedPageAcrossAnchors(t *testing.T) {
+	counter := &countRequests{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter.add(r.URL.Path)
+		_, _ = w.Write([]byte(`<div id="one"></div><div id="two"></div>`))
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	c.SetVersions([]string{"4.17", "4.18", "4.19"})
+
+	for _, anchor := range []string{"one", "two"} {
+		result, err := c.Check("https://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/storage/index#" + anchor)
+		if err != nil {
+			t.Fatalf("unexpected error for anchor %q: %v", anchor, err)
+		}
+		if len(result.NewerVersions) != 2 {
+			t.Errorf("anchor %q: NewerVersions = %d, want 2", anchor, len(result.NewerVersions))
+		}
+	}
+
+	// Two newer versions, fetched once each even though two anchors were checked.
+	wantRequests := 2
+	if got := counter.totalCount(); got != wantRequests {
+		t.Errorf("requests = %d, want %d", got, wantRequests)
+	}
+	if got := counter.forPath("/en/documentation/openshift_container_platform/4.18/html-single/storage/index"); got != 1 {
+		t.Errorf("requests for 4.18 page = %d, want 1", got)
+	}
+}
+
+func TestCheck_HeadOnlyCacheUpgradesToGetForAnchor(t *testing.T) {
+	var gets, heads atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			heads.Add(1)
+		} else {
+			gets.Add(1)
+		}
+		_, _ = w.Write([]byte(`<div id="sec"></div>`))
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	pageURL := srv.URL + "/page"
+
+	exists, _, hasAnchor, err := c.checkURL(pageURL)
+	if err != nil || !exists || hasAnchor {
+		t.Fatalf("first check: exists=%v hasAnchor=%v err=%v, want exists=true hasAnchor=false", exists, hasAnchor, err)
+	}
+
+	exists, anchorExists, hasAnchor, err := c.checkURL(pageURL + "#sec")
+	if err != nil || !exists || !hasAnchor || !anchorExists {
+		t.Fatalf("anchor check: exists=%v anchorExists=%v hasAnchor=%v err=%v, want all true", exists, anchorExists, hasAnchor, err)
+	}
+
+	// A second anchored check for a different anchor must reuse the IDs.
+	exists, anchorExists, _, err = c.checkURL(pageURL + "#missing")
+	if err != nil || !exists || anchorExists {
+		t.Fatalf("second anchor check: exists=%v anchorExists=%v err=%v, want exists=true anchorExists=false", exists, anchorExists, err)
+	}
+
+	if got := heads.Load(); got != 1 {
+		t.Errorf("HEAD requests = %d, want 1", got)
+	}
+	if got := gets.Load(); got != 1 {
+		t.Errorf("GET requests = %d, want 1 after upgrading the HEAD-only entry", got)
+	}
+
+	// A repeated no-anchor check is served entirely from the cache.
+	exists, _, _, err = c.checkURL(pageURL)
+	if err != nil || !exists {
+		t.Fatalf("repeat no-anchor check: exists=%v err=%v, want exists=true", exists, err)
+	}
+	if got := heads.Load() + gets.Load(); got != 2 {
+		t.Errorf("total requests = %d, want 2 (repeat check hits the cache)", got)
+	}
+}
+
+func TestCheck_CacheWorksOnZeroValueMaps(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<div id="sec"></div>`))
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	c.cache, c.inflight = nil, nil // simulate a Checker that skipped NewChecker
+
+	exists, anchorExists, _, err := c.checkURL(srv.URL + "/page#sec")
+	if err != nil || !exists || !anchorExists {
+		t.Fatalf("exists=%v anchorExists=%v err=%v, want all true", exists, anchorExists, err)
+	}
+}
+
+func TestCheck_CachesNotFound(t *testing.T) {
+	counter := &countRequests{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter.add(r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	pageURL := srv.URL + "/missing"
+	for i := 0; i < 3; i++ {
+		exists, _, _, err := c.checkURL(pageURL)
+		if err != nil || exists {
+			t.Fatalf("check %d: exists=%v err=%v, want exists=false err=nil", i, exists, err)
+		}
+	}
+
+	if got := counter.totalCount(); got != 1 {
+		t.Errorf("requests = %d, want 1 (404 is cached)", got)
+	}
+}
+
+func TestCheck_DoesNotCacheErrors(t *testing.T) {
+	counter := &countRequests{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter.add(r.URL.Path)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	pageURL := srv.URL + "/blocked"
+	for i := 0; i < 2; i++ {
+		exists, _, _, err := c.checkURL(pageURL)
+		if err == nil || exists {
+			t.Fatalf("check %d: exists=%v err=%v, want exists=false and an error", i, exists, err)
+		}
+	}
+
+	if got := counter.totalCount(); got != 2 {
+		t.Errorf("requests = %d, want 2 (errors are not cached)", got)
+	}
+}
+
+func TestCheck_ConcurrentFetchesShareOneRequest(t *testing.T) {
+	counter := &countRequests{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter.add(r.URL.Path)
+		time.Sleep(20 * time.Millisecond)
+		_, _ = w.Write([]byte(`<div id="sec"></div>`))
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	pageURL := srv.URL + "/shared"
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			exists, anchorExists, _, err := c.checkURL(pageURL + "#sec")
+			if err != nil || !exists || !anchorExists {
+				t.Errorf("exists=%v anchorExists=%v err=%v, want all true", exists, anchorExists, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := counter.totalCount(); got != 1 {
+		t.Errorf("requests = %d, want 1 (concurrent fetches are deduplicated)", got)
+	}
+}
+
+func TestCheck_ConcurrentFetchesShareOneError(t *testing.T) {
+	counter := &countRequests{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		counter.add(r.URL.Path)
+		time.Sleep(20 * time.Millisecond)
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	pageURL := srv.URL + "/blocked"
+
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, _, err := c.checkURL(pageURL); err == nil {
+				t.Error("expected an error for a blocked page")
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := counter.totalCount(); got != 1 {
+		t.Errorf("requests = %d, want 1 (waiters join the in-flight fetch)", got)
 	}
 }
