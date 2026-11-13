@@ -162,6 +162,13 @@ func (e *HTTPStatusError) Error() string {
 	return msg
 }
 
+// headRejected reports whether a HEAD response means the server does not
+// support HEAD for this URL, so the request should be repeated with GET.
+// 403 is deliberately excluded: it signals blocking, not an unsupported method.
+func headRejected(code int) bool {
+	return code == http.StatusMethodNotAllowed || code == http.StatusNotImplemented
+}
+
 // isRetryableStatus reports whether a status code is worth retrying.
 func isRetryableStatus(code int) bool {
 	return code == http.StatusTooManyRequests || code >= 500
@@ -213,8 +220,11 @@ func (c *Checker) checkURL(urlString string) (bool, bool, bool, error) {
 		} else {
 			// No anchor, use HEAD for efficiency
 			resp, err = c.do(http.MethodHead, baseURL)
-			if err != nil {
-				// If HEAD fails, try GET
+			if err != nil || headRejected(resp.StatusCode) {
+				// HEAD failed or isn't supported here; ask again with GET
+				if err == nil {
+					_ = resp.Body.Close()
+				}
 				resp, err = c.do(http.MethodGet, baseURL)
 			}
 		}
