@@ -27,8 +27,11 @@ func ParseOCPDocURL(rawURL string) (*OCPDocURL, error) {
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
-	// Validate this is an OCP documentation URL
-	if !strings.Contains(parsedURL.Host, "docs.redhat.com") {
+	// Validate this is an OCP documentation URL. Compare the exact hostname
+	// rather than a substring: url.URL.Hostname() ignores any port, and an
+	// exact match rejects deceptive names such as
+	// docs.redhat.com.attacker.example or docs.redhat.com.evil.
+	if parsedURL.Scheme != "https" || parsedURL.Hostname() != "docs.redhat.com" {
 		return nil, fmt.Errorf("not a Red Hat documentation URL")
 	}
 

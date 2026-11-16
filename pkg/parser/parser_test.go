@@ -12,6 +12,7 @@ func TestParseOCPDocURL(t *testing.T) {
 		wantDoc     string
 		wantPage    string
 		wantAnchor  string
+		wantBaseURL string
 		wantErr     bool
 	}{
 		{
@@ -69,6 +70,39 @@ func TestParseOCPDocURL(t *testing.T) {
 			url:     "https://docs.redhat.com/something/else",
 			wantErr: true,
 		},
+		{
+			name:    "Invalid URL - deceptive host suffix",
+			url:     "https://docs.redhat.com.attacker.example/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index",
+			wantErr: true,
+		},
+		{
+			name:    "Invalid URL - deceptive subdomain",
+			url:     "https://evil.docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index",
+			wantErr: true,
+		},
+		{
+			name:    "Invalid URL - deceptive prefix",
+			url:     "https://docs.redhat.company.net/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index",
+			wantErr: true,
+		},
+		{
+			name:    "Invalid URL - plain HTTP",
+			url:     "http://docs.redhat.com/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index",
+			wantErr: true,
+		},
+		{
+			name:    "Invalid URL - redhat host hidden in userinfo",
+			url:     "https://docs.redhat.com@attacker.example/en/documentation/openshift_container_platform/4.17/html-single/disconnected_environments/index",
+			wantErr: true,
+		},
+		{
+			name:        "Valid URL with explicit HTTPS port",
+			url:         "https://docs.redhat.com:8443/en/documentation/openshift_container_platform/4.18/html-single/disconnected_environments/index",
+			wantVersion: "4.18",
+			wantDoc:     "disconnected_environments",
+			wantPage:    "index",
+			wantBaseURL: "https://docs.redhat.com:8443",
+		},
 	}
 
 	for _, tt := range tests {
@@ -92,6 +126,9 @@ func TestParseOCPDocURL(t *testing.T) {
 			}
 			if got.Anchor != tt.wantAnchor {
 				t.Errorf("ParseOCPDocURL() Anchor = %v, want %v", got.Anchor, tt.wantAnchor)
+			}
+			if tt.wantBaseURL != "" && got.BaseURL != tt.wantBaseURL {
+				t.Errorf("ParseOCPDocURL() BaseURL = %v, want %v", got.BaseURL, tt.wantBaseURL)
 			}
 		})
 	}
