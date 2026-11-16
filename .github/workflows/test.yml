@@ -29,6 +29,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Guard against script injection in action.yml
+        run: |
+          # Inputs must reach shell scripts through an env: mapping. An inputs
+          # expression anywhere else in a run: block is expanded into the script
+          # text by GitHub and can break out of quotes.
+          if grep -nE '\$\{\{ *inputs\.' action.yml | grep -vE '^[0-9]+:[[:space:]]+[A-Z_]+: \$\{\{ inputs\.'; then
+            echo "::error::Move the inputs above into the step's env: block and reference them as \$INPUT_*"
+            exit 1
+          fi
+
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
@@ -39,6 +49,35 @@ jobs:
 
       - name: Build
         run: go build -o ocp-doc-checker .
+
+  test-action-injection:
+    name: Test GitHub Action Input Handling
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Run action with a shell metacharacter URL
+        id: injection
+        uses: ./
+        continue-on-error: true
+        with:
+          url: 'x"; touch /tmp/ocp-doc-checker-injected; echo "'
+
+      - name: Verify the URL was not executed
+        env:
+          OUTCOME: ${{ steps.injection.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "::error::Expected the action to reject the malformed URL (outcome: $OUTCOME)"
+            exit 1
+          fi
+          # The url input legitimately appears in the emitted errors, so the
+          # marker file, not the text, proves whether the shell ran it.
+          if [ -e /tmp/ocp-doc-checker-injected ]; then
+            echo "::error::Shell metacharacters from the url input were executed"
+            exit 1
+          fi
 
   test-cli:
     name: Test CLI - ${{ matrix.test.name }}

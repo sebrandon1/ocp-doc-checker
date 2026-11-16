@@ -73,67 +73,74 @@ runs:
     - name: Run ocp-doc-checker
       id: check
       shell: bash
+      env:
+        INPUT_URL: ${{ inputs.url }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_FIX: ${{ inputs.fix }}
+        INPUT_VERBOSE: ${{ inputs.verbose }}
+        INPUT_ALL_AVAILABLE: ${{ inputs.all-available }}
+        INPUT_FAIL_ON_OUTDATED: ${{ inputs.fail-on-outdated }}
       run: |
         set +e  # Don't fail immediately on error
-        
+
         FLAGS=""
-        if [ "${{ inputs.verbose }}" = "true" ]; then
+        if [ "$INPUT_VERBOSE" = "true" ]; then
           FLAGS="$FLAGS -verbose"
         fi
-        if [ "${{ inputs.all-available }}" = "true" ]; then
+        if [ "$INPUT_ALL_AVAILABLE" = "true" ]; then
           FLAGS="$FLAGS -all-available"
         fi
-        
+
         # Check if both url and paths are provided
-        if [ -n "${{ inputs.url }}" ] && [ -n "${{ inputs.paths }}" ]; then
+        if [ -n "$INPUT_URL" ] && [ -n "$INPUT_PATHS" ]; then
           echo "::error::Cannot specify both 'url' and 'paths'. Use one or the other."
           exit 1
         fi
-        
+
         # Validate fix flag usage
-        if [ "${{ inputs.fix }}" = "true" ] && [ -n "${{ inputs.url }}" ]; then
+        if [ "$INPUT_FIX" = "true" ] && [ -n "$INPUT_URL" ]; then
           echo "::error::The 'fix' option can only be used with 'paths', not with a single 'url'."
           exit 1
         fi
-        
+
         # Default to current directory if neither url nor paths specified
-        SCAN_PATHS="${{ inputs.paths }}"
-        if [ -z "${{ inputs.url }}" ] && [ -z "${{ inputs.paths }}" ]; then
+        SCAN_PATHS="$INPUT_PATHS"
+        if [ -z "$INPUT_URL" ] && [ -z "$INPUT_PATHS" ]; then
           echo "No paths specified, defaulting to current directory (.)"
           SCAN_PATHS="."
         fi
-        
+
         # Single URL mode
-        if [ -n "${{ inputs.url }}" ]; then
-          OUTPUT=$(/tmp/ocp-doc-checker -url "${{ inputs.url }}" $FLAGS -json)
+        if [ -n "$INPUT_URL" ]; then
+          OUTPUT=$(/tmp/ocp-doc-checker -url "$INPUT_URL" $FLAGS -json)
           EXIT_CODE=$?
 
           if ! printf '%s' "$OUTPUT" | jq -e '(.is_outdated | type == "boolean") and (.original_version | type == "string")' > /dev/null 2>&1; then
-            SAFE_URL=$(printf '%s' "${{ inputs.url }}" | sed -E 's#(https?://)[^/@]+@#\1[redacted]@#; s/\?.*$//')
+            SAFE_URL=$(printf '%s' "$INPUT_URL" | sed -E 's#(https?://)[^/@]+@#\1[redacted]@#; s/\?.*$//')
             ERRORS=$(jq -cn --arg url "$SAFE_URL" --arg message "URL check failed (exit code $EXIT_CODE)" '[{url: $url, message: $message}]')
             echo "error-count=1" >> $GITHUB_OUTPUT
             echo "errors=$ERRORS" >> $GITHUB_OUTPUT
             echo "::error::Unable to check the documentation URL"
             exit 1
           fi
-          
+
           echo "$OUTPUT"
-          
+
           # Parse JSON output
           IS_OUTDATED=$(echo "$OUTPUT" | jq -r '.is_outdated')
           LATEST_VERSION=$(echo "$OUTPUT" | jq -r '.latest_version')
           NEWER_VERSIONS=$(echo "$OUTPUT" | jq -c '.newer_versions')
-          
+
           # Set outputs
           echo "is-outdated=$IS_OUTDATED" >> $GITHUB_OUTPUT
           echo "latest-version=$LATEST_VERSION" >> $GITHUB_OUTPUT
           echo "newer-versions=$NEWER_VERSIONS" >> $GITHUB_OUTPUT
-          
+
           # Create summary
           if [ "$IS_OUTDATED" = "true" ]; then
             echo "### ⚠️ Documentation is Outdated" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**URL:** ${{ inputs.url }}" >> $GITHUB_STEP_SUMMARY
+            echo "**URL:** $INPUT_URL" >> $GITHUB_STEP_SUMMARY
             echo "**Latest Version:** $LATEST_VERSION" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "#### Newer Versions Available:" >> $GITHUB_STEP_SUMMARY
@@ -141,23 +148,23 @@ runs:
           else
             echo "### ✅ Documentation is Up to Date" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**URL:** ${{ inputs.url }}" >> $GITHUB_STEP_SUMMARY
+            echo "**URL:** $INPUT_URL" >> $GITHUB_STEP_SUMMARY
             echo "**Version:** $LATEST_VERSION" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
           # Fail if requested and outdated
-          if [ "${{ inputs.fail-on-outdated }}" = "true" ] && [ "$IS_OUTDATED" = "true" ]; then
+          if [ "$INPUT_FAIL_ON_OUTDATED" = "true" ] && [ "$IS_OUTDATED" = "true" ]; then
             echo "::error::Documentation is outdated. Latest version: $LATEST_VERSION"
             exit 1
           fi
-          
+
           exit 0
         fi
-        
+
         # Batch mode - scan paths for URLs
-        
+
         # If fix mode is enabled, use the binary's built-in fix functionality
-        if [ "${{ inputs.fix }}" = "true" ]; then
+        if [ "$INPUT_FIX" = "true" ]; then
           echo "=========================================="
           echo "🔧 FIX MODE ENABLED"
           echo "=========================================="
@@ -358,7 +365,7 @@ runs:
         fi
         
         # Fail if requested and any outdated
-        if [ "${{ inputs.fail-on-outdated }}" = "true" ] && [ $OUTDATED_COUNT -gt 0 ]; then
+        if [ "$INPUT_FAIL_ON_OUTDATED" = "true" ] && [ $OUTDATED_COUNT -gt 0 ]; then
           echo "::error::Found $OUTDATED_COUNT outdated documentation URL(s)"
           exit 1
         fi
