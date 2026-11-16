@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sebrandon1/ocp-doc-checker/pkg/parser"
@@ -135,31 +136,22 @@ func (c *Checker) Check(rawURL string) (*CheckResult, error) {
 	// Filter versions to check (only those newer than current)
 	versionsToCheck := c.getNewerVersions(docURL.Version)
 
+	// Check the versions in parallel, at most c.maxConcurrent at a time. Results
+	// are written to their original index so ordering does not depend on which
+	// request finishes first.
+	versionResults := c.checkVersions(docURL, versionsToCheck)
+
 	var firstErr error
 	errCount := 0
 
-	// Check each version
-	for _, version := range versionsToCheck {
-		checkURL := docURL.BuildURL(version)
-		exists, anchorExists, hasAnchor, err := c.checkURL(checkURL)
-
-		versionResult := VersionCheckResult{
-			Version:      version,
-			URL:          checkURL,
-			Exists:       exists,
-			AnchorExists: anchorExists,
-			HasAnchor:    hasAnchor,
-			Error:        err,
-			CheckedAt:    time.Now(),
-		}
-
+	for _, versionResult := range versionResults {
 		result.AllResults = append(result.AllResults, versionResult)
 
 		switch state := versionResult.State(); {
 		case state == StateError:
 			errCount++
 			if firstErr == nil {
-				firstErr = err
+				firstErr = versionResult.Error
 			}
 		case state.Usable():
 			result.NewerVersions = append(result.NewerVersions, versionResult)
@@ -182,6 +174,52 @@ func (c *Checker) Check(rawURL string) (*CheckResult, error) {
 	}
 
 	return result, nil
+}
+
+// concurrency returns the effective number of version checks that may run at
+// once. A non-positive maxConcurrent falls back to serial checking.
+func (c *Checker) concurrency() int {
+	if c.maxConcurrent < 1 {
+		return 1
+	}
+	return c.maxConcurrent
+}
+
+// checkVersions checks every version in versions and returns the results in the
+// same order, regardless of completion order. At most c.concurrency() requests
+// are in flight at any moment.
+func (c *Checker) checkVersions(docURL *parser.OCPDocURL, versions []string) []VersionCheckResult {
+	results := make([]VersionCheckResult, len(versions))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, c.concurrency())
+
+	for i, version := range versions {
+		wg.Add(1)
+		go func(i int, version string) {
+			defer wg.Done()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			checkURL := docURL.BuildURL(version)
+			exists, anchorExists, hasAnchor, err := c.checkURL(checkURL)
+
+			// Each goroutine writes only its own slot; no lock needed.
+			results[i] = VersionCheckResult{
+				Version:      version,
+				URL:          checkURL,
+				Exists:       exists,
+				AnchorExists: anchorExists,
+				HasAnchor:    hasAnchor,
+				Error:        err,
+				CheckedAt:    time.Now(),
+			}
+		}(i, version)
+	}
+
+	wg.Wait()
+	return results
 }
 
 // HTTPStatusError reports an HTTP response that neither confirms nor denies

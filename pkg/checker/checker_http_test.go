@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // newTestChecker returns a Checker whose requests are all routed to srv,
@@ -170,4 +172,153 @@ func TestCheck_NotFoundEverywhereIsUpToDate(t *testing.T) {
 	if result.IsOutdated || result.LatestVersion != "4.18" {
 		t.Errorf("got outdated=%v latest=%s, want outdated=false latest=4.18", result.IsOutdated, result.LatestVersion)
 	}
+}
+
+// peakTracker records how many requests were in flight at the same time.
+type peakTracker struct {
+	mu      sync.Mutex
+	current int
+	peak    int
+}
+
+func (p *peakTracker) enter() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.current++
+	if p.current > p.peak {
+		p.peak = p.current
+	}
+}
+
+func (p *peakTracker) leave() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.current--
+}
+
+func (p *peakTracker) max() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.peak
+}
+
+func TestCheck_ConcurrencyBound(t *testing.T) {
+	const limit = 2
+
+	tracker := &peakTracker{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracker.enter()
+		// Hold the request open long enough for overlapping requests to show up.
+		time.Sleep(20 * time.Millisecond)
+		tracker.leave()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	c.SetVersions([]string{"4.19", "4.20", "4.21", "4.22", "5.0"})
+	c.maxConcurrent = limit
+
+	if _, err := c.Check(testDocURL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := tracker.max(); got != limit {
+		t.Errorf("peak in-flight requests = %d, want %d", got, limit)
+	}
+}
+
+func TestCheck_NonPositiveConcurrencyIsSerial(t *testing.T) {
+	tracker := &peakTracker{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracker.enter()
+		time.Sleep(5 * time.Millisecond)
+		tracker.leave()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	c.SetVersions([]string{"4.19", "4.20", "4.21"})
+	c.maxConcurrent = 0
+
+	result, err := c.Check(testDocURL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := tracker.max(); got != 1 {
+		t.Errorf("peak in-flight requests = %d, want 1 with non-positive maxConcurrent", got)
+	}
+	if want := "4.19,4.20,4.21"; versionsOf(result.AllResults) != want {
+		t.Errorf("AllResults versions = %s, want %s", versionsOf(result.AllResults), want)
+	}
+}
+
+func TestCheck_ResultsOrderedRegardlessOfCompletionOrder(t *testing.T) {
+	// Make earlier versions respond last so completion order is reversed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/4.19/"):
+			time.Sleep(60 * time.Millisecond)
+		case strings.Contains(r.URL.Path, "/4.20/"):
+			time.Sleep(30 * time.Millisecond)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	c.SetVersions([]string{"4.18", "4.19", "4.20", "4.21"})
+	c.maxConcurrent = 4
+
+	result, err := c.Check(testDocURL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if want := "4.19,4.20,4.21"; versionsOf(result.AllResults) != want {
+		t.Errorf("AllResults versions = %s, want %s", versionsOf(result.AllResults), want)
+	}
+	if want := "4.19,4.20,4.21"; versionsOf(result.NewerVersions) != want {
+		t.Errorf("NewerVersions = %s, want %s", versionsOf(result.NewerVersions), want)
+	}
+	if !result.IsOutdated || result.LatestVersion != "4.21" {
+		t.Errorf("got outdated=%v latest=%s, want outdated=true latest=4.21", result.IsOutdated, result.LatestVersion)
+	}
+}
+
+func TestCheck_NoNewerVersionsSkipsRequests(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newTestChecker(t, srv)
+	c.SetVersions([]string{"4.22", "5.0"})
+
+	result, err := c.Check("https://docs.redhat.com/en/documentation/openshift_container_platform/5.0/html-single/storage/index")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Errorf("requests = %d, want 0 when no version is newer", got)
+	}
+	if result.IsOutdated || result.LatestVersion != "5.0" {
+		t.Errorf("got outdated=%v latest=%s, want outdated=false latest=5.0", result.IsOutdated, result.LatestVersion)
+	}
+	if len(result.AllResults) != 0 {
+		t.Errorf("AllResults = %d entries, want 0", len(result.AllResults))
+	}
+}
+
+// versionsOf joins the version fields of results in slice order.
+func versionsOf(results []VersionCheckResult) string {
+	versions := make([]string, len(results))
+	for i, r := range results {
+		versions[i] = r.Version
+	}
+	return strings.Join(versions, ",")
 }

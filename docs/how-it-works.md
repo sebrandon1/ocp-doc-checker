@@ -1,7 +1,7 @@
 # How It Works
 
 1. **URL Parsing** — Extracts OCP version and document structure from Red Hat documentation URLs
-2. **Version Discovery** — Checks newer OCP versions to see if the same document exists
+2. **Version Discovery** — Checks newer OCP versions to see if the same document exists. Candidate versions are checked in parallel with at most 5 requests in flight, while results stay ordered by version
 3. **URL Validation** — Verifies that suggested URLs are accessible (HTTP HEAD/GET requests)
 4. **Anchor Validation** — When a URL contains a fragment (`#anchor`), the tool:
    - Fetches and parses the HTML page
@@ -21,7 +21,7 @@ This prevents suggesting URLs where the documentation page exists but the specif
 
 **Example:** If you have a URL pointing to 4.17 with anchor `#installing-sr-iov-operator_installing-sriov-operator`, and in 4.19 the SR-IOV content moved from the networking guide to the hardware_networks guide, the tool will detect that the anchor doesn't exist in the 4.19 networking guide and won't suggest it as an upgrade path.
 
-**Performance Note:** Anchor validation requires fetching and parsing full HTML pages, which is slower than simple HEAD requests. For URLs without anchors, the tool uses fast HEAD requests. URLs with anchors will take longer to validate (typically 1-3 seconds per URL).
+**Performance Note:** Anchor validation requires fetching and parsing full HTML pages, which is slower than simple HEAD requests. For URLs without anchors, the tool uses fast HEAD requests. URLs with anchors will take longer to validate (typically 1-3 seconds per URL). Because candidate versions are checked concurrently (bounded to 5 in-flight requests), a URL with many newer versions takes roughly one single-version check per batch of five instead of the sum of every check.
 
 ## Supported URL Formats
 
